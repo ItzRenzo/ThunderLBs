@@ -10,11 +10,13 @@ import java.util.Objects;
 public final class LeaderboardAnimations {
     private final Title title;
     private final Row row;
+    private final Opacity opacity;
     private final Bar bar;
 
-    private LeaderboardAnimations(Title title, Row row, Bar bar) {
+    private LeaderboardAnimations(Title title, Row row, Opacity opacity, Bar bar) {
         this.title = title;
         this.row = row;
+        this.opacity = opacity;
         this.bar = bar;
     }
 
@@ -23,6 +25,7 @@ public final class LeaderboardAnimations {
         return new LeaderboardAnimations(
                 Title.from(null, defaults.title()),
                 Row.from(null, defaults.row()),
+                Opacity.from(null, defaults.opacity()),
                 Bar.from(null, defaults.bar())
         );
     }
@@ -34,12 +37,13 @@ public final class LeaderboardAnimations {
         }
         Title title = Title.from(section.getConfigurationSection("title"), defaults.title());
         Row row = Row.from(section.getConfigurationSection("rows"), defaults.row());
+        Opacity opacity = Opacity.from(section.getConfigurationSection("opacity"), defaults.opacity());
         Bar bar = Bar.from(section.getConfigurationSection("progress"), defaults.bar());
-        return new LeaderboardAnimations(title, row, bar);
+        return new LeaderboardAnimations(title, row, opacity, bar);
     }
 
     public LeaderboardAnimations copy() {
-        return new LeaderboardAnimations(title.copy(), row.copy(), bar.copy());
+        return new LeaderboardAnimations(title.copy(), row.copy(), opacity.copy(), bar.copy());
     }
 
     public Title title() {
@@ -50,6 +54,10 @@ public final class LeaderboardAnimations {
         return row;
     }
 
+    public Opacity opacity() {
+        return opacity;
+    }
+
     public Bar bar() {
         return bar;
     }
@@ -57,6 +65,7 @@ public final class LeaderboardAnimations {
     public void serialize(ConfigurationSection section) {
         Title.serialize(section.createSection("title"), title);
         Row.serialize(section.createSection("rows"), row);
+        Opacity.serialize(section.createSection("opacity"), opacity);
         Bar.serialize(section.createSection("progress"), bar);
     }
 
@@ -347,6 +356,94 @@ public final class LeaderboardAnimations {
             section.set("out-curve", row.outCurve.name().toLowerCase(Locale.ROOT));
             section.set("start-offset", row.startOffset);
             section.set("distance", row.distance);
+        }
+    }
+
+    public static final class Opacity {
+        private boolean inEnabled;
+        private boolean outEnabled;
+        private EasingType inCurve;
+        private EasingType outCurve;
+
+        private Opacity(boolean inEnabled,
+                boolean outEnabled,
+                EasingType inCurve,
+                EasingType outCurve) {
+            this.inEnabled = inEnabled;
+            this.outEnabled = outEnabled;
+            this.inCurve = Objects.requireNonNullElse(inCurve, EasingType.LINEAR);
+            this.outCurve = Objects.requireNonNullElse(outCurve, EasingType.LINEAR);
+        }
+
+        public static Opacity from(ConfigurationSection section, PluginConfig.Animation.Opacity defaults) {
+            boolean enabled = section == null || section.getBoolean("enabled", true);
+            boolean inEnabled = section == null || section.getBoolean("in-enabled", enabled);
+            boolean outEnabled = section == null || section.getBoolean("out-enabled", enabled);
+            EasingType inCurve = defaults.inEasing();
+            EasingType outCurve = defaults.outEasing();
+            if (section != null) {
+                String global = section.getString("type");
+                inCurve = EasingType.fromFriendly(section.getString("in-curve", global), inCurve);
+                outCurve = EasingType.fromFriendly(section.getString("out-curve", global), outCurve);
+                if (global != null && global.equalsIgnoreCase("none")) {
+                    inEnabled = false;
+                    outEnabled = false;
+                }
+            }
+            return new Opacity(inEnabled, outEnabled, inCurve, outCurve);
+        }
+
+        public Opacity copy() {
+            return new Opacity(inEnabled, outEnabled, inCurve, outCurve);
+        }
+
+        public boolean enabled() {
+            return inEnabled || outEnabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.inEnabled = enabled;
+            this.outEnabled = enabled;
+        }
+
+        public boolean inEnabled() {
+            return inEnabled;
+        }
+
+        public void setInEnabled(boolean inEnabled) {
+            this.inEnabled = inEnabled;
+        }
+
+        public boolean outEnabled() {
+            return outEnabled;
+        }
+
+        public void setOutEnabled(boolean outEnabled) {
+            this.outEnabled = outEnabled;
+        }
+
+        public EasingType inCurve() {
+            return inCurve;
+        }
+
+        public void setInCurve(EasingType inCurve) {
+            this.inCurve = Objects.requireNonNullElse(inCurve, EasingType.LINEAR);
+        }
+
+        public EasingType outCurve() {
+            return outCurve;
+        }
+
+        public void setOutCurve(EasingType outCurve) {
+            this.outCurve = Objects.requireNonNullElse(outCurve, EasingType.LINEAR);
+        }
+
+        private static void serialize(ConfigurationSection section, Opacity opacity) {
+            section.set("enabled", opacity.enabled());
+            section.set("in-enabled", opacity.inEnabled);
+            section.set("out-enabled", opacity.outEnabled);
+            section.set("in-curve", opacity.inCurve.name().toLowerCase(Locale.ROOT));
+            section.set("out-curve", opacity.outCurve.name().toLowerCase(Locale.ROOT));
         }
     }
 

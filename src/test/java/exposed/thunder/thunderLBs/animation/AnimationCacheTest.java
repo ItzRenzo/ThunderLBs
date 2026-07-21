@@ -56,12 +56,15 @@ class AnimationCacheTest {
     void entranceAndExitCanBeDisabledIndependently() {
         LeaderboardAnimations animations = animations(EasingType.EASE_IN_SINE);
         animations.title().setInEnabled(false);
+        animations.title().setOutEnabled(false);
         animations.row().setOutEnabled(false);
 
         AnimationCache cache = new AnimationCache(animations);
 
         assertEquals(1, cache.titleInScale().length);
-        assertEquals(20, cache.titleOutScale().length);
+        assertEquals(1.5F, cache.titleInScale()[0]);
+        assertEquals(1, cache.titleOutScale().length);
+        assertEquals(1.5F, cache.titleOutScale()[0]);
         assertEquals(20, cache.rowInOffsets().length);
         assertEquals(1, cache.rowOutOffsets().length);
     }
@@ -79,6 +82,7 @@ class AnimationCacheTest {
                 new PluginConfig.Animation.Title(20, 20, EasingType.EASE_OUT_BACK, outEasing, 1.5D, 4.5D),
                 new PluginConfig.Animation.Row(20, 20, EasingType.EASE_OUT_CUBIC, EasingType.EASE_IN_CUBIC,
                         -1.25D, 1.25D),
+                new PluginConfig.Animation.Opacity(EasingType.LINEAR, EasingType.LINEAR),
                 new PluginConfig.Animation.Bar(10, EasingType.LINEAR, -1.0D, 0.0D)
         );
         return LeaderboardAnimations.defaults(defaults);

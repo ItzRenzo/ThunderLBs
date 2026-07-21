@@ -27,6 +27,8 @@ public final class RelativeDisplayManager {
     private static final int GLIDE_TICKS = 10;
     private static final int ANIMATION_INTERPOLATION_TICKS = 1;
     private static final int OPACITY_TRANSPARENT = 0;
+    private static final int OPACITY_LOWER_HALF = 127;
+    private static final int OPACITY_UPPER_HALF = 128;
     private static final int OPACITY_OPAQUE = 255;
 
     private final ThunderLBs plugin;
@@ -157,35 +159,42 @@ public final class RelativeDisplayManager {
         cancelAnimationTasks();
         float[] offsets = leaderboard.animationCache().rowInOffsets();
         float initialOffset = offsets.length == 0 ? 0.0F : offsets[0];
-        applyAnimationState(initialOffset, packOpacity(OPACITY_TRANSPARENT));
         LeaderboardAnimations.Row animation = definition.animations().row();
-        if (PageSession.usesClientInterpolation(animation.inEnabled(), animation.inCurve(), offsets.length)) {
+        LeaderboardAnimations.Opacity opacity = definition.animations().opacity();
+        applyAnimationState(initialOffset, packOpacity(
+                opacity.inEnabled() ? OPACITY_TRANSPARENT : OPACITY_OPAQUE));
+        int frameCount = PageSession.phaseFrameCount(offsets.length, opacity.inEnabled(), animation.inFrames());
+        if (PageSession.usesClientInterpolation(animation.inEnabled(), animation.inCurve(),
+                opacity.inEnabled(), opacity.inCurve(), frameCount)) {
             float targetOffset = offsets[offsets.length - 1];
             scheduleLinearTransition(
                     Math.max(1L, entranceDelay),
-                    offsets.length,
+                    frameCount,
                     targetOffset,
-                    packOpacity(OPACITY_OPAQUE),
+                    opacity.inEnabled(),
+                    true,
                     this::schedulePageExit
             );
             return;
         }
 
+        float[] phaseOffsets = PageSession.expandFrames(offsets, frameCount);
         TaskHandle entrance = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             private int frame;
 
             @Override
             public void accept(TaskHandle task) {
-                if (frame >= offsets.length) {
+                if (frame >= phaseOffsets.length) {
                     task.cancel();
-                    float finalOffset = offsets.length == 0 ? 0.0F : offsets[offsets.length - 1];
+                    float finalOffset = phaseOffsets[phaseOffsets.length - 1];
                     applyAnimationState(finalOffset, packOpacity(OPACITY_OPAQUE));
                     schedulePageExit();
                     return;
                 }
                 applyAnimationState(
-                        offsets[frame],
-                        opacityAtFrame(frame, offsets.length, true)
+                        phaseOffsets[frame],
+                        PageSession.opacityAtFrame(
+                                frame, phaseOffsets.length, true, opacity.inEnabled(), opacity.inCurve())
                 );
                 frame++;
             }
@@ -197,31 +206,38 @@ public final class RelativeDisplayManager {
         float[] offsets = leaderboard.animationCache().rowOutOffsets();
         long delay = Math.max(1L, leaderboard.definition().settings().pageDurationTicks());
         LeaderboardAnimations.Row animation = definition.animations().row();
-        if (PageSession.usesClientInterpolation(animation.outEnabled(), animation.outCurve(), offsets.length)) {
+        LeaderboardAnimations.Opacity opacity = definition.animations().opacity();
+        int frameCount = PageSession.phaseFrameCount(offsets.length, opacity.outEnabled(), animation.outFrames());
+        if (PageSession.usesClientInterpolation(animation.outEnabled(), animation.outCurve(),
+                opacity.outEnabled(), opacity.outCurve(), frameCount)) {
             float targetOffset = offsets[offsets.length - 1];
             scheduleLinearTransition(
                     delay,
-                    offsets.length,
+                    frameCount,
                     targetOffset,
-                    packOpacity(OPACITY_TRANSPARENT),
+                    opacity.outEnabled(),
+                    false,
                     () -> {}
             );
             return;
         }
+        float[] phaseOffsets = PageSession.expandFrames(offsets, frameCount);
         TaskHandle exit = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             private int frame;
 
             @Override
             public void accept(TaskHandle task) {
-                if (frame >= offsets.length) {
+                if (frame >= phaseOffsets.length) {
                     task.cancel();
-                    float finalOffset = offsets.length == 0 ? 0.0F : offsets[offsets.length - 1];
-                    applyAnimationState(finalOffset, packOpacity(OPACITY_TRANSPARENT));
+                    float finalOffset = phaseOffsets[phaseOffsets.length - 1];
+                    applyAnimationState(finalOffset, packOpacity(
+                            opacity.outEnabled() ? OPACITY_TRANSPARENT : OPACITY_OPAQUE));
                     return;
                 }
                 applyAnimationState(
-                        offsets[frame],
-                        opacityAtFrame(frame, offsets.length, false)
+                        phaseOffsets[frame],
+                        PageSession.opacityAtFrame(
+                                frame, phaseOffsets.length, false, opacity.outEnabled(), opacity.outCurve())
                 );
                 frame++;
             }
@@ -238,29 +254,24 @@ public final class RelativeDisplayManager {
 
         float[] offsets = leaderboard.animationCache().rowOutOffsets();
         LeaderboardAnimations.Row animation = definition.animations().row();
-        if (PageSession.usesClientInterpolation(animation.outEnabled(), animation.outCurve(), offsets.length)) {
+        LeaderboardAnimations.Opacity opacity = definition.animations().opacity();
+        int frameCount = PageSession.phaseFrameCount(offsets.length, opacity.outEnabled(), animation.outFrames());
+        if (PageSession.usesClientInterpolation(animation.outEnabled(), animation.outCurve(),
+                opacity.outEnabled(), opacity.outCurve(), frameCount)) {
+            float startOffset = offsets[0];
             float targetOffset = offsets[offsets.length - 1];
-            for (BoardDisplay display : displays) {
-                if (display == null || display.isRemoved()) {
-                    continue;
-                }
-                display.interpolation(0, PageSession.linearInterpolationTicks(offsets.length));
-                applyRetiringState(display, targetOffset, packOpacity(OPACITY_TRANSPARENT));
-            }
-            TaskHandle cleanup = scheduler.runDelayed(origin, task -> {
-                task.cancel();
-                removeRetiringDisplays(displays);
-            }, PageSession.linearCompletionDelayTicks(offsets.length));
-            retirementTasks.add(cleanup);
+            scheduleRetiringLinearTransition(
+                    displays, frameCount, startOffset, targetOffset, opacity.outEnabled());
             return;
         }
 
+        float[] phaseOffsets = PageSession.expandFrames(offsets, frameCount);
         TaskHandle exit = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             private int frame;
 
             @Override
             public void accept(TaskHandle task) {
-                if (frame >= offsets.length) {
+                if (frame >= phaseOffsets.length) {
                     task.cancel();
                     removeRetiringDisplays(displays);
                     return;
@@ -270,12 +281,71 @@ public final class RelativeDisplayManager {
                         continue;
                     }
                     display.interpolation(0, ANIMATION_INTERPOLATION_TICKS);
-                    applyRetiringState(display, offsets[frame], opacityAtFrame(frame, offsets.length, false));
+                    applyRetiringState(display, phaseOffsets[frame], PageSession.opacityAtFrame(
+                            frame, phaseOffsets.length, false, opacity.outEnabled(), opacity.outCurve()));
                 }
                 frame++;
             }
         }, 1L, 1L);
         retirementTasks.add(exit);
+    }
+
+    private void scheduleRetiringLinearTransition(List<BoardDisplay> displays,
+            int frameCount,
+            float startOffset,
+            float targetOffset,
+            boolean opacityEnabled) {
+        if (!opacityEnabled) {
+            applyRetiringDisplays(
+                    displays,
+                    PageSession.linearInterpolationTicks(frameCount),
+                    targetOffset,
+                    packOpacity(OPACITY_OPAQUE));
+            TaskHandle cleanup = scheduler.runDelayed(origin, task -> {
+                task.cancel();
+                removeRetiringDisplays(displays);
+            }, PageSession.linearCompletionDelayTicks(frameCount));
+            retirementTasks.add(cleanup);
+            return;
+        }
+
+        PageSession.LinearOpacitySplit split = Objects.requireNonNull(
+                PageSession.linearOpacitySplit(frameCount));
+        float firstOffset = PageSession.interpolateLinearValue(
+                startOffset, targetOffset, split.firstTicks(), split.totalTicks());
+        applyRetiringDisplays(
+                displays, split.firstTicks(), firstOffset, packOpacity(OPACITY_UPPER_HALF));
+
+        TaskHandle bridge = scheduler.runDelayed(origin, bridgeTask -> {
+            float bridgeOffset = PageSession.interpolateLinearValue(
+                    startOffset, targetOffset, split.firstTicks() + 1, split.totalTicks());
+            applyRetiringDisplays(displays, 0, bridgeOffset, packOpacity(OPACITY_LOWER_HALF));
+
+            TaskHandle finish = scheduler.runDelayed(origin, finishTask -> {
+                applyRetiringDisplays(
+                        displays, split.secondTicks(), targetOffset, packOpacity(OPACITY_TRANSPARENT));
+                TaskHandle cleanup = scheduler.runDelayed(origin, cleanupTask -> {
+                    cleanupTask.cancel();
+                    removeRetiringDisplays(displays);
+                }, split.secondTicks() + 1L);
+                retirementTasks.add(cleanup);
+            }, 1L);
+            retirementTasks.add(finish);
+        }, split.firstTicks());
+        retirementTasks.add(bridge);
+    }
+
+    private void applyRetiringDisplays(List<BoardDisplay> displays,
+            int interpolationTicks,
+            float offset,
+            byte opacity) {
+        for (BoardDisplay display : displays) {
+            if (display == null || display.isRemoved()) {
+                continue;
+            }
+            display.interpolation(0, interpolationTicks);
+            applyRetiringState(display, offset, opacity);
+        }
     }
 
     private void applyRetiringState(BoardDisplay display, float offset, byte opacity) {
@@ -310,7 +380,8 @@ public final class RelativeDisplayManager {
     private void scheduleLinearTransition(long initialDelayTicks,
             int frameCount,
             float targetOffset,
-            byte targetOpacity,
+            boolean opacityEnabled,
+            boolean fadeIn,
             Runnable onComplete) {
         TaskHandle start = scheduler.runDelayed(origin, task -> {
             if (activePage == null) {
@@ -320,39 +391,114 @@ public final class RelativeDisplayManager {
             int duration = PageSession.linearInterpolationTicks(frameCount);
             float startOffset = animationOffset;
             byte startOpacity = animationOpacity;
-            LinearTransition transition = new LinearTransition(
-                    Bukkit.getCurrentTick(),
-                    duration,
-                    startOffset,
-                    targetOffset,
-                    startOpacity,
-                    targetOpacity);
-            linearTransition = transition;
-            animationOffset = startOffset;
-            animationOpacity = startOpacity;
-
-            for (BoardDisplay display : playerDisplays.values()) {
-                applyLinearTarget(display, transition, duration);
+            if (!opacityEnabled) {
+                LinearTransition transition = beginLinearSegment(
+                        duration, startOffset, targetOffset, startOpacity, packOpacity(OPACITY_OPAQUE));
+                scheduleLinearCompletion(
+                        transition,
+                        PageSession.linearCompletionDelayTicks(frameCount),
+                        targetOffset,
+                        packOpacity(OPACITY_OPAQUE),
+                        onComplete);
+                return;
             }
 
-            TaskHandle completion = scheduler.runDelayed(origin, completionTask -> {
-                if (linearTransition != transition) {
-                    completionTask.cancel();
+            PageSession.LinearOpacitySplit split = Objects.requireNonNull(
+                    PageSession.linearOpacitySplit(frameCount));
+            float firstOffset = PageSession.interpolateLinearValue(
+                    startOffset, targetOffset, split.firstTicks(), split.totalTicks());
+            byte firstOpacity = packOpacity(fadeIn ? OPACITY_LOWER_HALF : OPACITY_UPPER_HALF);
+            LinearTransition first = beginLinearSegment(
+                    split.firstTicks(), startOffset, firstOffset, startOpacity, firstOpacity);
+
+            TaskHandle bridge = scheduler.runDelayed(origin, bridgeTask -> {
+                if (linearTransition != first) {
+                    bridgeTask.cancel();
                     return;
                 }
                 linearTransition = null;
-                animationOffset = targetOffset;
-                animationOpacity = targetOpacity;
+                float bridgeOffset = PageSession.interpolateLinearValue(
+                        startOffset, targetOffset, split.firstTicks() + 1, split.totalTicks());
+                byte bridgeOpacity = packOpacity(fadeIn ? OPACITY_UPPER_HALF : OPACITY_LOWER_HALF);
+                animationOffset = bridgeOffset;
+                animationOpacity = bridgeOpacity;
                 for (BoardDisplay display : playerDisplays.values()) {
-                    if (display != null && !display.isRemoved()) {
-                        display.interpolation(0, ANIMATION_INTERPOLATION_TICKS);
-                    }
+                    applyImmediateLinearState(display, bridgeOffset, bridgeOpacity);
                 }
-                onComplete.run();
-            }, PageSession.linearCompletionDelayTicks(frameCount));
-            animationTasks.add(completion);
+
+                TaskHandle finish = scheduler.runDelayed(origin, finishTask -> {
+                    if (activePage == null || linearTransition != null) {
+                        finishTask.cancel();
+                        return;
+                    }
+                    byte targetOpacity = packOpacity(fadeIn ? OPACITY_OPAQUE : OPACITY_TRANSPARENT);
+                    LinearTransition second = beginLinearSegment(
+                            split.secondTicks(), bridgeOffset, targetOffset, bridgeOpacity, targetOpacity);
+                    scheduleLinearCompletion(
+                            second,
+                            split.secondTicks() + 1L,
+                            targetOffset,
+                            targetOpacity,
+                            onComplete);
+                }, 1L);
+                animationTasks.add(finish);
+            }, split.firstTicks());
+            animationTasks.add(bridge);
         }, Math.max(1L, initialDelayTicks));
         animationTasks.add(start);
+    }
+
+    private LinearTransition beginLinearSegment(int duration,
+            float startOffset,
+            float targetOffset,
+            byte startOpacity,
+            byte targetOpacity) {
+        LinearTransition transition = new LinearTransition(
+                Bukkit.getCurrentTick(),
+                Math.max(1, duration),
+                startOffset,
+                targetOffset,
+                startOpacity,
+                targetOpacity);
+        linearTransition = transition;
+        animationOffset = startOffset;
+        animationOpacity = startOpacity;
+        for (BoardDisplay display : playerDisplays.values()) {
+            applyLinearTarget(display, transition, duration);
+        }
+        return transition;
+    }
+
+    private void scheduleLinearCompletion(LinearTransition expected,
+            long delay,
+            float targetOffset,
+            byte targetOpacity,
+            Runnable onComplete) {
+        TaskHandle completion = scheduler.runDelayed(origin, completionTask -> {
+            if (linearTransition != expected) {
+                completionTask.cancel();
+                return;
+            }
+            linearTransition = null;
+            animationOffset = targetOffset;
+            animationOpacity = targetOpacity;
+            for (BoardDisplay display : playerDisplays.values()) {
+                if (display != null && !display.isRemoved()) {
+                    display.interpolation(0, ANIMATION_INTERPOLATION_TICKS);
+                }
+            }
+            onComplete.run();
+        }, delay);
+        animationTasks.add(completion);
+    }
+
+    private void applyImmediateLinearState(BoardDisplay display, float offset, byte opacity) {
+        if (display == null || display.isRemoved()) {
+            return;
+        }
+        display.interpolation(0, 0);
+        display.transformAndOpacity(offset * boardScale, 0.0F, 0.0F,
+                boardScale, boardScale, boardScale, opacity);
     }
 
     private void applyLinearTarget(BoardDisplay display, LinearTransition transition, int remainingTicks) {
@@ -712,15 +858,6 @@ public final class RelativeDisplayManager {
     private static byte packOpacity(int alpha) {
         int clamped = Math.max(OPACITY_TRANSPARENT, Math.min(OPACITY_OPAQUE, alpha));
         return (byte) clamped;
-    }
-
-    private static byte opacityAtFrame(int frame, int totalFrames, boolean fadeIn) {
-        if (totalFrames <= 1) {
-            return packOpacity(fadeIn ? OPACITY_OPAQUE : OPACITY_TRANSPARENT);
-        }
-        double progress = (double) frame / (double) (totalFrames - 1);
-        double alpha = fadeIn ? progress : (1.0D - progress);
-        return packOpacity((int) Math.round(alpha * OPACITY_OPAQUE));
     }
 
     private void removeDisplay(UUID uuid) {

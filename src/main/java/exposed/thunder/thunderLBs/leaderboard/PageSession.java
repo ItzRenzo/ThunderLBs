@@ -29,6 +29,8 @@ import java.util.regex.Pattern;
 
 final class PageSession {
     private static final int OPACITY_TRANSPARENT = 0;
+    private static final int OPACITY_LOWER_HALF = 127;
+    private static final int OPACITY_UPPER_HALF = 128;
     private static final int OPACITY_OPAQUE = 255;
     private static final int TITLE_INTERPOLATION = 1;
     private static final int ROW_INTERPOLATION = 1;
@@ -256,10 +258,17 @@ final class PageSession {
         if (barMode == BarMode.NONE) {
             base.add(0.0D, config.defaults().barOffsetY() * boardScale, 0.0D);
         }
+        LeaderboardAnimations.Title titleAnimation = definition.animations().title();
+        LeaderboardAnimations.Opacity opacityAnimation = definition.animations().opacity();
+        float[] titleFrames = animationCache.titleInScale();
+        float initialScale = titleAnimation.inEnabled() ? titleFrames[0] : titleFrames[titleFrames.length - 1];
+        byte initialOpacity = opacityAnimation.inEnabled()
+                ? packOpacity(OPACITY_TRANSPARENT)
+                : packOpacity(OPACITY_OPAQUE);
         BoardDisplay display = spawnDisplay(base, baseOptions()
                 .shadowed(definition.textShadow())
-                .opacity(packOpacity(OPACITY_TRANSPARENT))
-                .scale(0.0F, 0.0F, 0.0F)
+                .opacity(initialOpacity)
+                .scale(initialScale * boardScale, initialScale * boardScale, initialScale * boardScale)
                 .interpolationDuration(TITLE_INTERPOLATION)
                 .teleportDuration(TITLE_INTERPOLATION));
 
@@ -284,9 +293,6 @@ final class PageSession {
                 }
                 if (index >= characters.size()) {
                     task.cancel();
-                    if (!usesClientInterpolatedTitleEntrance()) {
-                        display.opacity(packOpacity(OPACITY_OPAQUE));
-                    }
                     return;
                 }
                 display.text(characters.get(index));
@@ -341,24 +347,34 @@ final class PageSession {
     private void scheduleTitleAnimations(BoardDisplay display) {
         float[] frames = animationCache.titleInScale();
         LeaderboardAnimations.Title animation = definition.animations().title();
-        if (usesClientInterpolation(animation.inEnabled(), animation.inCurve(), frames.length)) {
+        LeaderboardAnimations.Opacity opacity = definition.animations().opacity();
+        int frameCount = phaseFrameCount(frames.length, opacity.inEnabled(), animation.inFrames());
+        if (usesClientInterpolation(animation.inEnabled(), animation.inCurve(),
+                opacity.inEnabled(), opacity.inCurve(), frameCount)) {
+            float startScale = frames[0];
             float targetScale = frames[frames.length - 1];
             scheduleLinearTransition(
                     display,
                     1L,
-                    frames.length,
-                    () -> applyScale(display, targetScale, packOpacity(OPACITY_OPAQUE)),
+                    frameCount,
+                    startScale,
+                    targetScale,
+                    opacity.inEnabled(),
+                    true,
+                    (scale, alpha) -> applyScale(display, scale, alpha),
                     () -> scheduleTitleFade(display)
             );
             return;
         }
+        float[] phaseFrames = expandFrames(frames, frameCount);
         scheduleFrameAnimation(
                 display,
                 1L,
-                frames,
+                phaseFrames,
                 (scale, frame, totalFrames) -> {
                     display.interpolation(0, TITLE_INTERPOLATION);
-                    applyScale(display, scale, opacityAtFrame(frame, totalFrames, true));
+                    applyScale(display, scale, opacityAtFrame(
+                            frame, totalFrames, true, opacity.inEnabled(), opacity.inCurve()));
                 },
                 () -> scheduleTitleFade(display)
         );
@@ -368,24 +384,34 @@ final class PageSession {
         long delay = Math.max(1L, definition.settings().pageDurationTicks());
         float[] frames = animationCache.titleOutScale();
         LeaderboardAnimations.Title animation = definition.animations().title();
-        if (usesClientInterpolation(animation.outEnabled(), animation.outCurve(), frames.length)) {
+        LeaderboardAnimations.Opacity opacity = definition.animations().opacity();
+        int frameCount = phaseFrameCount(frames.length, opacity.outEnabled(), animation.outFrames());
+        if (usesClientInterpolation(animation.outEnabled(), animation.outCurve(),
+                opacity.outEnabled(), opacity.outCurve(), frameCount)) {
+            float startScale = frames[0];
             float targetScale = frames[frames.length - 1];
             scheduleLinearTransition(
                     display,
                     delay,
-                    frames.length,
-                    () -> applyScale(display, targetScale, packOpacity(OPACITY_TRANSPARENT)),
+                    frameCount,
+                    startScale,
+                    targetScale,
+                    opacity.outEnabled(),
+                    false,
+                    (scale, alpha) -> applyScale(display, scale, alpha),
                     () -> despawnDisplay(display)
             );
             return;
         }
+        float[] phaseFrames = expandFrames(frames, frameCount);
         scheduleFrameAnimation(
                 display,
                 delay,
-                frames,
+                phaseFrames,
                 (scale, frame, totalFrames) -> {
                     display.interpolation(0, TITLE_INTERPOLATION);
-                    applyScale(display, scale, opacityAtFrame(frame, totalFrames, false));
+                    applyScale(display, scale, opacityAtFrame(
+                            frame, totalFrames, false, opacity.outEnabled(), opacity.outCurve()));
                 },
                 () -> despawnDisplay(display)
         );
@@ -576,22 +602,60 @@ final class PageSession {
     private void scheduleBarFade(BarPair pair, long fadeDelayTicks) {
         BoardDisplay container = pair.container();
         BoardDisplay value = pair.value();
-        TaskHandle fade = scheduler.runDelayed(origin, task -> {
-                if (!ensureSessionActive()) {
-                    task.cancel();
-                    return;
-                }
-                container.interpolation(0, BAR_FADE_TICKS);
-                container.opacity(packOpacity(OPACITY_TRANSPARENT));
-                value.interpolation(0, BAR_FADE_TICKS);
-                value.opacity(packOpacity(OPACITY_TRANSPARENT));
-                TaskHandle cleanup = scheduler.runDelayed(origin, cleanupTask -> {
+        LeaderboardAnimations.Opacity opacity = definition.animations().opacity();
+        if (!opacity.outEnabled()) {
+            TaskHandle cleanup = scheduler.runDelayed(origin, cleanupTask -> {
+                despawnDisplay(container);
+                despawnDisplay(value);
+            }, fadeDelayTicks + BAR_FADE_TICKS);
+            tasks.add(cleanup);
+            return;
+        }
+
+        if (usesClientInterpolation(
+                false, EasingType.LINEAR, true, opacity.outCurve(), BAR_FADE_TICKS)) {
+            scheduleLinearTransition(
+                    container,
+                    fadeDelayTicks,
+                    BAR_FADE_TICKS,
+                    0.0F,
+                    0.0F,
+                    true,
+                    false,
+                    (ignored, alpha) -> container.opacity(alpha),
+                    () -> {});
+            scheduleLinearTransition(
+                    value,
+                    fadeDelayTicks,
+                    BAR_FADE_TICKS,
+                    0.0F,
+                    0.0F,
+                    true,
+                    false,
+                    (ignored, alpha) -> value.opacity(alpha),
+                    () -> {
                         despawnDisplay(container);
                         despawnDisplay(value);
-                }, BAR_FADE_TICKS);
-                tasks.add(cleanup);
-        }, fadeDelayTicks);
-        tasks.add(fade);
+                    });
+            return;
+        }
+
+        scheduleFrameAnimation(
+                container,
+                fadeDelayTicks,
+                new float[BAR_FADE_TICKS],
+                (ignored, frame, totalFrames) -> {
+                    byte alpha = opacityAtFrame(
+                            frame, totalFrames, false, true, opacity.outCurve());
+                    container.interpolation(0, BAR_INITIAL_INTERPOLATION);
+                    container.opacity(alpha);
+                    value.interpolation(0, BAR_INITIAL_INTERPOLATION);
+                    value.opacity(alpha);
+                },
+                () -> {
+                    despawnDisplay(container);
+                    despawnDisplay(value);
+                });
     }
 
     static long progressCycleTicks(long pageDurationTicks, int entranceFrames) {
@@ -618,6 +682,44 @@ final class PageSession {
 
     static boolean usesClientInterpolation(boolean enabled, EasingType easing, int frameCount) {
         return enabled && easing == EasingType.LINEAR && frameCount > 1;
+    }
+
+    static boolean usesClientInterpolation(boolean motionEnabled,
+            EasingType motionEasing,
+            boolean opacityEnabled,
+            EasingType opacityEasing,
+            int frameCount) {
+        if ((!motionEnabled && !opacityEnabled) || frameCount <= 1) {
+            return false;
+        }
+        if (motionEnabled && motionEasing != EasingType.LINEAR) {
+            return false;
+        }
+        if (motionEnabled && opacityEnabled) {
+            return false;
+        }
+        if (!opacityEnabled) {
+            return true;
+        }
+        return opacityEasing == EasingType.LINEAR && linearOpacitySplit(frameCount) != null;
+    }
+
+    static int phaseFrameCount(int motionFrameCount, boolean opacityEnabled, int configuredFrames) {
+        int opacityFrames = opacityEnabled ? Math.max(1, configuredFrames) : 1;
+        return Math.max(Math.max(1, motionFrameCount), opacityFrames);
+    }
+
+    static LinearOpacitySplit linearOpacitySplit(int frameCount) {
+        int totalTicks = linearInterpolationTicks(frameCount);
+        if (totalTicks < 3) {
+            return null;
+        }
+        int firstTicks = Math.max(1, (totalTicks - 1) / 2);
+        int secondTicks = totalTicks - firstTicks - 1;
+        if (secondTicks < 1) {
+            return null;
+        }
+        return new LinearOpacitySplit(totalTicks, firstTicks, secondTicks);
     }
 
     static double scaledRowOffset(double rowYOffset, double rowSpacing, int index, double boardScale) {
@@ -738,10 +840,14 @@ final class PageSession {
         Location base = origin.clone().add(0.0D, entry.offsetY(), 0.0D);
         float[] rowOffsets = animationCache.rowInOffsets();
         float startOffset = rowOffsets.length == 0 ? 0.0F : rowOffsets[0];
+        LeaderboardAnimations.Opacity opacityAnimation = definition.animations().opacity();
+        byte initialOpacity = opacityAnimation.inEnabled()
+                ? packOpacity(OPACITY_TRANSPARENT)
+                : packOpacity(OPACITY_OPAQUE);
         BoardDisplay row = spawnDisplay(base, baseOptions()
                 .shadowed(definition.textShadow())
                 .text(entry.component())
-                .opacity(packOpacity(OPACITY_TRANSPARENT))
+                .opacity(initialOpacity)
                 .interpolationDuration(ROW_INTERPOLATION)
                 .teleportDuration(ROW_INTERPOLATION)
                 .translation(startOffset * boardScale, 0.0F, 0.0F)
@@ -756,24 +862,34 @@ final class PageSession {
     private void animateRow(BoardDisplay display) {
         float[] offsets = animationCache.rowInOffsets();
         LeaderboardAnimations.Row animation = definition.animations().row();
-        if (usesClientInterpolation(animation.inEnabled(), animation.inCurve(), offsets.length)) {
+        LeaderboardAnimations.Opacity opacity = definition.animations().opacity();
+        int frameCount = phaseFrameCount(offsets.length, opacity.inEnabled(), animation.inFrames());
+        if (usesClientInterpolation(animation.inEnabled(), animation.inCurve(),
+                opacity.inEnabled(), opacity.inCurve(), frameCount)) {
+            float startOffset = offsets[0];
             float targetOffset = offsets[offsets.length - 1];
             scheduleLinearTransition(
                     display,
                     1L,
-                    offsets.length,
-                    () -> applyRowTransform(display, targetOffset, packOpacity(OPACITY_OPAQUE)),
+                    frameCount,
+                    startOffset,
+                    targetOffset,
+                    opacity.inEnabled(),
+                    true,
+                    (offset, alpha) -> applyRowTransform(display, offset, alpha),
                     () -> scheduleRowFade(display)
             );
             return;
         }
+        float[] phaseOffsets = expandFrames(offsets, frameCount);
         scheduleFrameAnimation(
                 display,
                 1L,
-                offsets,
+                phaseOffsets,
                 (offset, frame, totalFrames) -> {
                     display.interpolation(0, ROW_INTERPOLATION);
-                    applyRowTransform(display, offset, opacityAtFrame(frame, totalFrames, true));
+                    applyRowTransform(display, offset, opacityAtFrame(
+                            frame, totalFrames, true, opacity.inEnabled(), opacity.inCurve()));
                 },
                 () -> scheduleRowFade(display)
         );
@@ -783,24 +899,34 @@ final class PageSession {
         long delay = Math.max(1L, definition.settings().pageDurationTicks());
         float[] offsets = animationCache.rowOutOffsets();
         LeaderboardAnimations.Row animation = definition.animations().row();
-        if (usesClientInterpolation(animation.outEnabled(), animation.outCurve(), offsets.length)) {
+        LeaderboardAnimations.Opacity opacity = definition.animations().opacity();
+        int frameCount = phaseFrameCount(offsets.length, opacity.outEnabled(), animation.outFrames());
+        if (usesClientInterpolation(animation.outEnabled(), animation.outCurve(),
+                opacity.outEnabled(), opacity.outCurve(), frameCount)) {
+            float startOffset = offsets[0];
             float targetOffset = offsets[offsets.length - 1];
             scheduleLinearTransition(
                     display,
                     delay,
-                    offsets.length,
-                    () -> applyRowTransform(display, targetOffset, packOpacity(OPACITY_TRANSPARENT)),
+                    frameCount,
+                    startOffset,
+                    targetOffset,
+                    opacity.outEnabled(),
+                    false,
+                    (offset, alpha) -> applyRowTransform(display, offset, alpha),
                     () -> despawnDisplay(display)
             );
             return;
         }
+        float[] phaseOffsets = expandFrames(offsets, frameCount);
         scheduleFrameAnimation(
                 display,
                 delay,
-                offsets,
+                phaseOffsets,
                 (offset, frame, totalFrames) -> {
                     display.interpolation(0, ROW_INTERPOLATION);
-                    applyRowTransform(display, offset, opacityAtFrame(frame, totalFrames, false));
+                    applyRowTransform(display, offset, opacityAtFrame(
+                            frame, totalFrames, false, opacity.outEnabled(), opacity.outCurve()));
                 },
                 () -> despawnDisplay(display)
         );
@@ -869,27 +995,79 @@ final class PageSession {
     private void scheduleLinearTransition(BoardDisplay display,
             long initialDelayTicks,
             int frameCount,
-            Runnable applyTarget,
+            float startValue,
+            float targetValue,
+            boolean opacityEnabled,
+            boolean fadeIn,
+            LinearFrameApplier applier,
             Runnable onComplete) {
         TaskHandle start = scheduler.runDelayed(origin, task -> {
             if (!ensureSessionActive() || display.isRemoved()) {
                 task.cancel();
                 return;
             }
-            display.interpolation(0, linearInterpolationTicks(frameCount));
-            applyTarget.run();
+            if (!opacityEnabled) {
+                display.interpolation(0, linearInterpolationTicks(frameCount));
+                applier.apply(targetValue, packOpacity(OPACITY_OPAQUE));
 
-            TaskHandle completion = scheduler.runDelayed(origin, completionTask -> {
+                TaskHandle completion = scheduler.runDelayed(origin, completionTask -> {
+                    if (!ensureSessionActive() || display.isRemoved()) {
+                        completionTask.cancel();
+                        return;
+                    }
+                    display.interpolation(0, 1);
+                    onComplete.run();
+                }, linearCompletionDelayTicks(frameCount));
+                tasks.add(completion);
+                return;
+            }
+
+            LinearOpacitySplit split = Objects.requireNonNull(linearOpacitySplit(frameCount));
+            float firstValue = interpolateLinearValue(
+                    startValue, targetValue, split.firstTicks(), split.totalTicks());
+            byte firstOpacity = packOpacity(fadeIn ? OPACITY_LOWER_HALF : OPACITY_UPPER_HALF);
+            display.interpolation(0, split.firstTicks());
+            applier.apply(firstValue, firstOpacity);
+
+            TaskHandle bridge = scheduler.runDelayed(origin, bridgeTask -> {
                 if (!ensureSessionActive() || display.isRemoved()) {
-                    completionTask.cancel();
+                    bridgeTask.cancel();
                     return;
                 }
-                display.interpolation(0, 1);
-                onComplete.run();
-            }, linearCompletionDelayTicks(frameCount));
-            tasks.add(completion);
+                float bridgeValue = interpolateLinearValue(
+                        startValue, targetValue, split.firstTicks() + 1, split.totalTicks());
+                byte bridgeOpacity = packOpacity(fadeIn ? OPACITY_UPPER_HALF : OPACITY_LOWER_HALF);
+                display.interpolation(0, 0);
+                applier.apply(bridgeValue, bridgeOpacity);
+
+                TaskHandle finish = scheduler.runDelayed(origin, finishTask -> {
+                    if (!ensureSessionActive() || display.isRemoved()) {
+                        finishTask.cancel();
+                        return;
+                    }
+                    display.interpolation(0, split.secondTicks());
+                    applier.apply(targetValue, packOpacity(fadeIn ? OPACITY_OPAQUE : OPACITY_TRANSPARENT));
+
+                    TaskHandle completion = scheduler.runDelayed(origin, completionTask -> {
+                        if (!ensureSessionActive() || display.isRemoved()) {
+                            completionTask.cancel();
+                            return;
+                        }
+                        display.interpolation(0, 1);
+                        onComplete.run();
+                    }, split.secondTicks() + 1L);
+                    tasks.add(completion);
+                }, 1L);
+                tasks.add(finish);
+            }, split.firstTicks());
+            tasks.add(bridge);
         }, Math.max(1L, initialDelayTicks));
         tasks.add(start);
+    }
+
+    static float interpolateLinearValue(float start, float target, int elapsedTicks, int totalTicks) {
+        double progress = (double) elapsedTicks / (double) Math.max(1, totalTicks);
+        return (float) (start + (target - start) * progress);
     }
 
     private boolean usesClientInterpolatedBar() {
@@ -898,14 +1076,6 @@ final class PageSession {
                 animationCache.barScales().length,
                 animationCache.barTranslations().length);
         return usesClientInterpolation(animation.enabled(), animation.curve(), frameCount);
-    }
-
-    private boolean usesClientInterpolatedTitleEntrance() {
-        LeaderboardAnimations.Title animation = definition.animations().title();
-        return usesClientInterpolation(
-                animation.inEnabled(),
-                animation.inCurve(),
-                animationCache.titleInScale().length);
     }
 
     private boolean ensureSessionActive() {
@@ -947,13 +1117,44 @@ final class PageSession {
         return (byte) clamped;
     }
 
-    private static byte opacityAtFrame(int frame, int totalFrames, boolean fadeIn) {
+    static byte opacityAtFrame(int frame,
+            int totalFrames,
+            boolean fadeIn,
+            boolean enabled,
+            EasingType easing) {
+        if (!enabled) {
+            return packOpacity(OPACITY_OPAQUE);
+        }
         if (totalFrames <= 1) {
             return packOpacity(fadeIn ? OPACITY_OPAQUE : OPACITY_TRANSPARENT);
         }
         double progress = (double) frame / (double) (totalFrames - 1);
-        double alpha = fadeIn ? progress : (1.0D - progress);
+        double eased = Objects.requireNonNullElse(easing, EasingType.LINEAR).apply(progress, 0.0D);
+        eased = Math.max(0.0D, Math.min(1.0D, eased));
+        double alpha = fadeIn ? eased : (1.0D - eased);
         return packOpacity((int) Math.round(alpha * OPACITY_OPAQUE));
+    }
+
+    static float[] expandFrames(float[] frames, int totalFrames) {
+        int count = Math.max(1, totalFrames);
+        if (frames.length == count) {
+            return frames;
+        }
+        float[] expanded = new float[count];
+        if (frames.length <= 1) {
+            float value = frames.length == 0 ? 0.0F : frames[0];
+            java.util.Arrays.fill(expanded, value);
+            return expanded;
+        }
+        for (int frame = 0; frame < count; frame++) {
+            double progress = count <= 1 ? 1.0D : (double) frame / (double) (count - 1);
+            double source = progress * (frames.length - 1);
+            int lower = (int) Math.floor(source);
+            int upper = Math.min(frames.length - 1, lower + 1);
+            double fraction = source - lower;
+            expanded[frame] = (float) (frames[lower] + (frames[upper] - frames[lower]) * fraction);
+        }
+        return expanded;
     }
 
     private record BarPair(BoardDisplay container, BoardDisplay value) {
@@ -962,9 +1163,17 @@ final class PageSession {
     private record RowEntry(double offsetY, Component component) {
     }
 
+    record LinearOpacitySplit(int totalTicks, int firstTicks, int secondTicks) {
+    }
+
     @FunctionalInterface
     private interface FrameApplier {
         void apply(float value, int frame, int totalFrames);
+    }
+
+    @FunctionalInterface
+    private interface LinearFrameApplier {
+        void apply(float value, byte opacity);
     }
 
     private static final class FrameAnimation {

@@ -370,14 +370,15 @@ public final class PluginConfig {
         }
     }
 
-    public record Animation(Title title, Row row, Bar bar) {
+    public record Animation(Title title, Row row, Opacity opacity, Bar bar) {
         private static Animation from(ConfigurationSection section) {
             if (section == null) {
-                return new Animation(Title.defaultTitle(), Row.defaultRow(), Bar.defaultBar());
+                return new Animation(Title.defaultTitle(), Row.defaultRow(), Opacity.defaultOpacity(), Bar.defaultBar());
             }
             return new Animation(
                     Title.from(section.getConfigurationSection("title")),
                     Row.from(section.getConfigurationSection("row")),
+                    Opacity.from(section.getConfigurationSection("opacity")),
                     Bar.from(section.getConfigurationSection("bar")));
         }
 
@@ -429,6 +430,25 @@ public final class PluginConfig {
 
             private static Row defaultRow() {
                 return new Row(20, 20, EasingType.EASE_OUT_CUBIC, EasingType.EASE_IN_CUBIC, -1.25D, 1.25D);
+            }
+        }
+
+        public record Opacity(EasingType inEasing, EasingType outEasing) {
+            private static Opacity from(ConfigurationSection section) {
+                if (section == null) {
+                    return defaultOpacity();
+                }
+                ConfigurationSection in = section.getConfigurationSection("in");
+                ConfigurationSection out = section.getConfigurationSection("out");
+                EasingType inEasing = EasingType.fromConfig(in != null ? in.getString("easing") : null,
+                        EasingType.LINEAR);
+                EasingType outEasing = EasingType.fromConfig(out != null ? out.getString("easing") : null,
+                        EasingType.LINEAR);
+                return new Opacity(inEasing, outEasing);
+            }
+
+            private static Opacity defaultOpacity() {
+                return new Opacity(EasingType.LINEAR, EasingType.LINEAR);
             }
         }
 

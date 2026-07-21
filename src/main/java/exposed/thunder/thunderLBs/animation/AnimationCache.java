@@ -53,7 +53,10 @@ public final class AnimationCache {
 
     private float[] computeScaleFrames(boolean enabled, int frames, EasingType easing, double multiplier,
             double overshoot, boolean fadeIn) {
-        if (!enabled || frames <= 1) {
+        if (!enabled) {
+            return new float[] {(float) multiplier};
+        }
+        if (frames <= 1) {
             return new float[] {fadeIn ? (float) multiplier : 0.0F};
         }
         float[] values = new float[frames];

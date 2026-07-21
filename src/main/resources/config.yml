@@ -124,6 +124,12 @@ animation:
       frames: 20
       easing: "EASE_IN_CUBIC"
       distance: 1.25
+  # Opacity reuses each title or row animation's frame count.
+  opacity:
+    in:
+      easing: "LINEAR"
+    out:
+      easing: "LINEAR"
   bar:
     frames: 10
     easing: "LINEAR"

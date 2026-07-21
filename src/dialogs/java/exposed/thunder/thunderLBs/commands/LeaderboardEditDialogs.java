@@ -123,7 +123,7 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                 "Adjust page duration, refresh frequency, row entrance delay, and title typing speed.", ACCENT,
                 (response, editor) -> openTiming(editor, id)));
         actions.add(button("Animations",
-                "Choose the easing styles used by title and row entrances and exits, plus page progress.", ACCENT,
+                "Choose easing for title, rows, opacity, and page progress.", ACCENT,
                 (response, editor) -> openAnimations(editor, id)));
         actions.add(button("Location",
                 "Change the board's coordinates and rotation, or position it using your current location.", ACCENT,
@@ -297,6 +297,10 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                         animations.row().inEnabled(), animations.row().inCurve())),
                 select("rows_out", "Row out animation", easingOptions(
                         animations.row().outEnabled(), animations.row().outCurve())),
+                select("opacity_in", "Opacity in animation", easingOptions(
+                        animations.opacity().inEnabled(), animations.opacity().inCurve())),
+                select("opacity_out", "Opacity out animation", easingOptions(
+                        animations.opacity().outEnabled(), animations.opacity().outCurve())),
                 select("progress", "Progress animation", easingOptions(
                         animations.bar().enabled(), animations.bar().curve()))
         );
@@ -314,6 +318,8 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                     applyAnimation(current.animations(), "title_out", text(response, "title_out"));
                     applyAnimation(current.animations(), "rows_in", text(response, "rows_in"));
                     applyAnimation(current.animations(), "rows_out", text(response, "rows_out"));
+                    applyAnimation(current.animations(), "opacity_in", text(response, "opacity_in"));
+                    applyAnimation(current.animations(), "opacity_out", text(response, "opacity_out"));
                     applyAnimation(current.animations(), "progress", text(response, "progress"));
                     finishSave(editor, current, () -> openBoard(editor, id), () -> openAnimations(editor, id));
                 },
@@ -882,6 +888,18 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                 animations.row().setOutEnabled(enabled);
                 if (enabled) {
                     animations.row().setOutCurve(easing);
+                }
+            }
+            case "opacity_in" -> {
+                animations.opacity().setInEnabled(enabled);
+                if (enabled) {
+                    animations.opacity().setInCurve(easing);
+                }
+            }
+            case "opacity_out" -> {
+                animations.opacity().setOutEnabled(enabled);
+                if (enabled) {
+                    animations.opacity().setOutCurve(easing);
                 }
             }
             case "progress" -> {
