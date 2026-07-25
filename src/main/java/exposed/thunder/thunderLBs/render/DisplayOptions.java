@@ -10,6 +10,7 @@ public final class DisplayOptions {
     private boolean shadowed = false;
     private boolean seeThrough = false;
     private int lineWidth = 200;
+    private TextAlignment alignment = TextAlignment.CENTER;
     private int interpolationDuration = 1;
     private int teleportDuration = 1;
     private byte opacity = (byte) 0;
@@ -36,6 +37,11 @@ public final class DisplayOptions {
 
     public DisplayOptions lineWidth(int lineWidth) {
         this.lineWidth = lineWidth;
+        return this;
+    }
+
+    public DisplayOptions alignment(TextAlignment alignment) {
+        this.alignment = alignment == null ? TextAlignment.CENTER : alignment;
         return this;
     }
 
@@ -103,6 +109,10 @@ public final class DisplayOptions {
 
     public int lineWidth() {
         return lineWidth;
+    }
+
+    public TextAlignment alignment() {
+        return alignment;
     }
 
     public int interpolationDuration() {

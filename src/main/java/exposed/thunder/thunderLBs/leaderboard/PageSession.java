@@ -4,8 +4,10 @@ import exposed.thunder.thunderLBs.ThunderLBs;
 import exposed.thunder.thunderLBs.animation.AnimationCache;
 import exposed.thunder.thunderLBs.animation.EasingType;
 import exposed.thunder.thunderLBs.config.PluginConfig;
+import exposed.thunder.thunderLBs.placeholder.PatternPlaceholders;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge.ProviderValue;
+import exposed.thunder.thunderLBs.placeholder.PlaceholderPatterns;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
 import exposed.thunder.thunderLBs.render.RenderBackend;
@@ -21,7 +23,6 @@ import org.bukkit.util.Vector;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
@@ -55,10 +56,14 @@ final class PageSession {
     private final boolean barUseHolderColor;
     private final boolean debugPlaceholders;
 
+    private final boolean rowHasPlaceholders;
+
     private final List<BoardDisplay> displays;
     private final List<TaskHandle> tasks;
     private final List<FrameAnimation> frameAnimations;
     private final RegionTaskScheduler scheduler;
+
+    private PatternPlaceholders boardPlaceholders = PatternPlaceholders.NONE;
     private TaskHandle frameAnimationTask;
     private boolean active;
     private boolean completed;
@@ -99,6 +104,7 @@ final class PageSession {
         this.barMode = definition.barMode();
         this.barUseHolderColor = definition.barUseHolderColor();
         this.debugPlaceholders = plugin.hasPlaceholderDebugListeners();
+        this.rowHasPlaceholders = PlaceholderPatterns.mayContain(definition.formatting().rowPattern());
         this.viewRange = Math.max(0.1F, definition.viewDistance() / 64.0F);
         this.boardScale = (float) definition.settings().boardScale();
     }
@@ -116,6 +122,7 @@ final class PageSession {
         this.active = true;
         this.completed = false;
         this.liveDisplays = 0;
+        this.boardPlaceholders = placeholderBridge.patterns(null);
         List<RowEntry> entries = prepareEntries();
         spawnTitle(world);
         spawnBar(world);
@@ -146,8 +153,12 @@ final class PageSession {
     }
 
     private DisplayOptions baseOptions() {
+
+
         return new DisplayOptions()
                 .billboard(billboard)
+                .lineWidth(definition.lineWidth())
+                .alignment(definition.alignment())
                 .viewRange(viewRange);
     }
 
@@ -161,8 +172,12 @@ final class PageSession {
 
     private List<RowEntry> prepareEntries() {
         int positions = Math.max(1, definition.settings().positions());
-        List<String> circled = config.formatting().circledNumbers();
+        List<String> circled = definition.formatting().circledNumbers(config.formatting());
         List<RowEntry> rows = new ArrayList<>(positions);
+
+
+        List<String> rendered = new ArrayList<>(positions);
+        List<Double> offsets = new ArrayList<>(positions);
         PluginConfig.Provider provider = config.provider();
         boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), definition.type());
         String namePattern;
@@ -228,9 +243,18 @@ final class PageSession {
             double offsetY = scaledRowOffset(
                     definition.settings().rowYOffset(), config.defaults().rowSpacing(), index, boardScale);
 
-            String rowColor = config.formatting().rankColor(index, page.color());
-            String renderedRow = renderRow(rowColor, circledNumber, playerName, formattedValue);
-            rows.add(new RowEntry(offsetY, plugin.deserializeMiniMessage(renderedRow)));
+            String rowColor = definition.formatting().rankColor(index, config.formatting(), page.color());
+            offsets.add(offsetY);
+            rendered.add(renderRow(rowColor, circledNumber, playerName, formattedValue,
+                    rowPlaceholders(playerName)));
+        }
+
+
+
+
+        List<String> normalized = definition.formatting().normalizeRows(rendered);
+        for (int i = 0; i < normalized.size(); i++) {
+            rows.add(new RowEntry(offsets.get(i), plugin.deserializeMiniMessage(normalized.get(i))));
         }
         return rows;
     }
@@ -251,7 +275,7 @@ final class PageSession {
         }
     }
 
-    // ---------------------------------------------------------------- title
+
 
     private void spawnTitle(World world) {
         Location base = origin.clone();
@@ -318,7 +342,7 @@ final class PageSession {
 
     private String renderTitle(String title) {
         return definition.formatting().renderTitle(
-                page.color(), page.icon(), Objects.requireNonNullElse(title, ""));
+                page.color(), page.icon(), Objects.requireNonNullElse(title, ""), boardPlaceholders);
     }
 
     private void playTypingSound(Location base, PluginConfig.Sounds.Typing typing) {
@@ -422,7 +446,7 @@ final class PageSession {
         display.transformAndOpacity(0.0F, 0.0F, 0.0F, scaled, scaled, scaled, opacity);
     }
 
-    // ------------------------------------------------------------------ bar
+
 
     private void spawnBar(World world) {
         switch (barMode) {
@@ -454,9 +478,7 @@ final class PageSession {
             } else {
                 color = bar.pendingColor();
             }
-            builder.append("<color:").append(color).append(">")
-                    .append(bar.symbol())
-                    .append("</color>");
+            builder.append(HolderColor.wrap(bar.symbol(), color));
             if (index < totalPages - 1) {
                 builder.append(bar.separator());
             }
@@ -744,38 +766,29 @@ final class PageSession {
         return valueLocation;
     }
 
-    private Component deserializeBarComponent(String template, String preferredColor) {
+    private Component deserializeBarComponent(String rawTemplate, String preferredColor) {
+
+
+        String template = boardPlaceholders.resolve(rawTemplate);
         String fallbackColor = extractColorFromTemplate(template);
-        String colorToUse = sanitizeHexColor(preferredColor);
+        String colorToUse = HolderColor.normalize(preferredColor);
         if (colorToUse == null) {
-            colorToUse = sanitizeHexColor(fallbackColor);
+            colorToUse = HolderColor.normalize(fallbackColor);
+        }
+        if (colorToUse == null) {
+            colorToUse = "#cfcfcf";
         }
         String processed = template;
         if (processed.contains("%color%")) {
-            String replacement = colorToUse != null ? colorToUse : (fallbackColor != null ? fallbackColor : "#CFCFCF");
-            processed = processed.replace("%color%", replacement);
+            processed = processed.replace("%color%", colorToUse);
         }
-        if (colorToUse != null && preferredColor != null) {
+        if (HolderColor.isValid(preferredColor)) {
             processed = overrideColorTag(processed, colorToUse);
         }
-        return plugin.deserializeMiniMessage(processed);
-    }
 
-    private String sanitizeHexColor(String color) {
-        if (color == null) {
-            return null;
-        }
-        String trimmed = color.trim();
-        if (trimmed.isEmpty()) {
-            return null;
-        }
-        if (!trimmed.startsWith("#")) {
-            trimmed = "#" + trimmed;
-        }
-        if (trimmed.length() != 4 && trimmed.length() != 7) {
-            return null;
-        }
-        return trimmed.toLowerCase(Locale.ROOT);
+
+        return plugin.deserializeMiniMessage(definition.formatting().padding()
+                .apply(HolderColor.apply(processed, colorToUse), colorToUse));
     }
 
     private String extractColorFromTemplate(String template) {
@@ -796,13 +809,13 @@ final class PageSession {
     private String overrideColorTag(String template, String color) {
         Matcher hexMatcher = HEX_COLOR_TAG.matcher(template);
         if (hexMatcher.find()) {
-            return hexMatcher.replaceFirst(Matcher.quoteReplacement("<" + color + ">"));
+            return hexMatcher.replaceFirst(Matcher.quoteReplacement("<color:" + color + ">"));
         }
         Matcher colorMatcher = COLOR_TAG.matcher(template);
         if (colorMatcher.find()) {
             return colorMatcher.replaceFirst(Matcher.quoteReplacement("<color:" + color + ">"));
         }
-        return "<" + color + ">" + template;
+        return HolderColor.wrap(template, color);
     }
 
     private void applyBarFrame(BarPair pair, float progressValue, float translationValue) {
@@ -814,7 +827,7 @@ final class PageSession {
                 clampedProgress * boardScale, 2.0F * boardScale, boardScale);
     }
 
-    // ----------------------------------------------------------------- rows
+
 
     private void spawnRows(World world, List<RowEntry> entries) {
         long delayBetween = Math.max(1L, definition.settings().rowDelayTicks());
@@ -855,8 +868,23 @@ final class PageSession {
         animateRow(row);
     }
 
-    private String renderRow(String color, String circledNumber, String playerName, String value) {
-        return definition.formatting().renderRow(color, circledNumber, playerName, value, page.icon());
+    private String renderRow(String color, String circledNumber, String playerName, String value,
+            PatternPlaceholders placeholders) {
+        return definition.formatting().renderRow(color, circledNumber, playerName, value, page.icon(),
+                placeholders);
+    }
+
+
+    private PatternPlaceholders rowPlaceholders(String playerName) {
+        if (!rowHasPlaceholders) {
+            return PatternPlaceholders.NONE;
+        }
+
+
+
+        boolean namesAPlayer = definition.type() != LeaderboardType.GROUP
+                && !playerName.equals(config.missingText());
+        return placeholderBridge.patterns(namesAPlayer ? placeholderBridge.holderContext(playerName) : null);
     }
 
     private void animateRow(BoardDisplay display) {

@@ -22,7 +22,7 @@ import java.util.Set;
 import java.util.logging.Level;
 
 public final class ConfigMigrator {
-    public static final int CURRENT_VERSION = 4;
+    public static final int CURRENT_VERSION = 6;
 
     private static final int LEGACY_VERSION = 1;
     private static final String CONFIG_FILE = "config.yml";
@@ -104,6 +104,12 @@ public final class ConfigMigrator {
         }
         if (sourceVersion < 4) {
             migrateVersionFour(config, providers);
+        }
+        if (sourceVersion < 5) {
+            migrateVersionFive(config, defaultConfig);
+        }
+        if (sourceVersion < 6) {
+            migrateVersionSix(config, defaultConfig);
         }
         config.set("config-version", CURRENT_VERSION);
     }
@@ -203,6 +209,20 @@ public final class ConfigMigrator {
                 config.set("provider", migratedName);
             }
         }
+    }
+
+
+    private static void migrateVersionFive(
+            YamlConfiguration config,
+            YamlConfiguration defaultConfig) {
+        mergeMissing(config, defaultConfig, "");
+    }
+
+
+    private static void migrateVersionSix(
+            YamlConfiguration config,
+            YamlConfiguration defaultConfig) {
+        mergeMissing(config, defaultConfig, "");
     }
 
     private static boolean isStockNativeProvider(

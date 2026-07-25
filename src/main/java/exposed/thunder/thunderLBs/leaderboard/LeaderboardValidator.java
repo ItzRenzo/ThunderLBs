@@ -1,7 +1,12 @@
 package exposed.thunder.thunderLBs.leaderboard;
 
-import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextColor;
+import exposed.thunder.thunderLBs.font.PadDiagnostic;
+import exposed.thunder.thunderLBs.font.PadPass;
+import exposed.thunder.thunderLBs.font.PadSettings;
+import exposed.thunder.thunderLBs.font.PadTagScanner;
+import exposed.thunder.thunderLBs.font.TextMeasurer;
+import exposed.thunder.thunderLBs.config.PluginConfig;
+import exposed.thunder.thunderLBs.placeholder.PlaceholderPatterns;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 
 import java.util.ArrayList;
@@ -14,10 +19,28 @@ public final class LeaderboardValidator {
     private static final int MAX_POSITIONS = 100;
     private static final long MAX_TIMING_TICKS = 20L * 60L * 60L;
 
+    private static final String DUMMY_COLOR = "#ffffff";
+
+    private static final String CHECK_PLAYER = "Player";
+    private static final String CHECK_VALUE = "1";
+
+    private static final String WIDE_PLAYER = "Wilhelmina_Smith";
+    private static final String WIDE_VALUE = "999,999,999";
+
+    private static final int LINE_WIDTH_HEADROOM = 8;
+    private static final int LINE_WIDTH_STEP = 10;
+
     private final MiniMessage miniMessage;
+    private final TextMeasurer measurer;
 
     public LeaderboardValidator() {
+        this(null);
+    }
+
+
+    public LeaderboardValidator(TextMeasurer measurer) {
         this.miniMessage = MiniMessage.miniMessage();
+        this.measurer = measurer;
     }
 
     public List<ValidationIssue> validate(LeaderboardDefinition definition) {
@@ -65,17 +88,41 @@ public final class LeaderboardValidator {
             if (page.title() == null || page.title().isBlank()) {
                 error(issues, path + ".title", "must not be empty");
             }
-            if (!isColor(page.color())) {
-                error(issues, path + ".color", "must be a named MiniMessage color or a hex color");
+            if (!HolderColor.isValid(page.color())) {
+                error(issues, path + ".color",
+                        "must be a named MiniMessage color, a hex color, or a gradient of 2-10 hex colors");
             }
         }
 
         LeaderboardFormatting formatting = definition.formatting();
-        validatePattern(issues, "formatting.title", formatting.titlePattern());
-        validatePattern(issues, "formatting.row", formatting.rowPattern());
-        validatePattern(issues, "formatting.relative", formatting.relativePattern());
-        validatePattern(issues, "formatting.bar.background", formatting.barBackground());
-        validatePattern(issues, "formatting.bar.foreground", formatting.barForeground());
+        boolean padded = validatePattern(issues, "formatting.title", formatting.titlePattern(), definition)
+                | validatePattern(issues, "formatting.row", formatting.rowPattern(), definition)
+                | validatePattern(issues, "formatting.relative", formatting.relativePattern(), definition)
+                | validatePattern(issues, "formatting.bar.background", formatting.barBackground(), definition)
+                | validatePattern(issues, "formatting.bar.foreground", formatting.barForeground(), definition);
+        if (padded) {
+
+
+            if (!formatting.padding().enabled()) {
+                warning(issues, "formatting.padding",
+                        "padding is disabled, so <pad:...> tags are removed without inserting any filler");
+            }
+            if (formatting.padding().settings().rowWidth() == PadSettings.ROW_WIDTH_OFF) {
+
+
+
+
+                warning(issues, "formatting.padding.row-width",
+                        "is off, so rows keep their natural widths and the <pad:...> column will still look"
+                                + " ragged; set it to auto or a pixel width");
+            }
+        }
+        formatting.rankColors().forEach((position, value) -> {
+            if (!HolderColor.isValid(value)) {
+                error(issues, "formatting.rank-colors." + position,
+                        "must be a named MiniMessage color, a hex color, or a gradient of 2-10 hex colors");
+            }
+        });
 
         long lastRowStart = settings.rowDelayTicks() * Math.max(0L, settings.positions() - 1L);
         if (lastRowStart >= settings.pageDurationTicks()) {
@@ -89,16 +136,105 @@ public final class LeaderboardValidator {
         return issues.stream().anyMatch(issue -> issue.severity() == ValidationIssue.Severity.ERROR);
     }
 
-    private void validatePattern(List<ValidationIssue> issues, String path, String pattern) {
-        String rendered = pattern == null ? "" : pattern
-                .replace("%color%", "#ffffff")
+
+    private boolean validatePattern(List<ValidationIssue> issues, String path, String pattern,
+            LeaderboardDefinition definition) {
+        String rendered = substitute(pattern, CHECK_PLAYER, CHECK_VALUE);
+        if (PadTagScanner.find(rendered).isEmpty()) {
+            validateMiniMessage(issues, path, rendered);
+            return false;
+        }
+
+        PadPass padding = definition.formatting().padding();
+        List<PadDiagnostic> diagnostics = new ArrayList<>();
+        String padded = padding.apply(rendered, DUMMY_COLOR, diagnostics);
+        for (PadDiagnostic diagnostic : diagnostics) {
+            add(issues, diagnostic.severity() == PadDiagnostic.Severity.ERROR
+                            ? ValidationIssue.Severity.ERROR : ValidationIssue.Severity.WARNING,
+                    path, diagnostic.message());
+        }
+
+
+        validateMiniMessage(issues, path, padded);
+        validateMeasurement(issues, path, padded, definition);
+        return true;
+    }
+
+
+    public int suggestedLineWidth(LeaderboardDefinition definition) {
+        return definition == null ? -1 : suggestedLineWidth(measurer, definition.formatting());
+    }
+
+    static int suggestedLineWidth(TextMeasurer measurer, LeaderboardFormatting formatting) {
+        if (measurer == null || formatting == null) {
+            return -1;
+        }
+        int widest = 0;
+        for (String pattern : List.of(formatting.titlePattern(), formatting.rowPattern(),
+                formatting.relativePattern(), formatting.barBackground(), formatting.barForeground())) {
+            widest = Math.max(widest, worstCaseWidth(measurer, formatting, pattern));
+        }
+        int rowWidth = formatting.padding().settings().rowWidth();
+        if (rowWidth > PadSettings.ROW_WIDTH_AUTO) {
+            widest = Math.max(widest, rowWidth);
+        }
+        if (widest <= 0) {
+            return -1;
+        }
+        int suggested = widest + LINE_WIDTH_HEADROOM;
+        suggested = ((suggested + LINE_WIDTH_STEP - 1) / LINE_WIDTH_STEP) * LINE_WIDTH_STEP;
+        return Math.max(PluginConfig.MIN_LINE_WIDTH, Math.min(PluginConfig.MAX_LINE_WIDTH, suggested));
+    }
+
+    private static int worstCaseWidth(TextMeasurer measurer, LeaderboardFormatting formatting, String pattern) {
+        String rendered = substitute(pattern, WIDE_PLAYER, WIDE_VALUE);
+        if (rendered.isEmpty()) {
+            return 0;
+        }
+        if (!PadTagScanner.find(rendered).isEmpty()) {
+            rendered = formatting.padding().apply(rendered, DUMMY_COLOR, new ArrayList<>());
+        }
+        try {
+            return measurer.measure(rendered).width();
+        } catch (RuntimeException ex) {
+            return 0;
+        }
+    }
+
+    private static String substitute(String pattern, String player, String value) {
+        String substituted = pattern == null ? "" : pattern
+                .replace("%color%", DUMMY_COLOR)
                 .replace("%icon%", "*")
                 .replace("%title%", "Title")
                 .replace("%position%", "1")
-                .replace("%player%", "Player")
-                .replace("%value%", "1")
+                .replace("%player%", player)
+                .replace("%value%", value)
                 .replace("%rank%", "1");
-        validateMiniMessage(issues, path, rendered);
+        return PlaceholderPatterns.strip(substituted);
+    }
+
+    private void validateMeasurement(List<ValidationIssue> issues, String path, String padded,
+            LeaderboardDefinition definition) {
+        if (measurer == null) {
+            return;
+        }
+        TextMeasurer.Measurement measurement = measurer.measure(padded);
+        if (measurement.width() > definition.lineWidth()) {
+            int suggested = suggestedLineWidth(definition);
+            String fix = suggested > definition.lineWidth()
+                    ? " Raise it with /lb edit " + definition.id() + " linewidth " + suggested
+                    : " Raise it with /lb edit " + definition.id() + " linewidth <pixels>";
+            warning(issues, path, "reaches " + measurement.width() + " pixels, past this board's line width of "
+                    + definition.lineWidth() + "; rows will wrap." + fix);
+        }
+        if (measurement.lineCount() > 1) {
+            warning(issues, path, "a line break in a padded format is unsupported;"
+                    + " columns after the break will not line up");
+        }
+        if (!measurement.exact()) {
+            warning(issues, path, "contains characters of unknown width, such as a resource-pack glyph or a"
+                    + " non-default font, so the column may be off. Add them to formatting.padding.glyph-widths");
+        }
     }
 
     private void validateMiniMessage(List<ValidationIssue> issues, String path, String value) {
@@ -107,14 +243,6 @@ public final class LeaderboardValidator {
         } catch (RuntimeException ex) {
             error(issues, path, "invalid MiniMessage: " + firstLine(ex.getMessage()));
         }
-    }
-
-    private boolean isColor(String color) {
-        if (color == null || color.isBlank()) {
-            return false;
-        }
-        String normalized = color.trim().toLowerCase(Locale.ROOT);
-        return TextColor.fromHexString(normalized) != null || NamedTextColor.NAMES.value(normalized) != null;
     }
 
     private void validatePositiveTiming(List<ValidationIssue> issues, String path, long value) {

@@ -1,6 +1,7 @@
 package exposed.thunder.thunderLBs.leaderboard;
 
 import exposed.thunder.thunderLBs.config.PluginConfig;
+import exposed.thunder.thunderLBs.render.TextAlignment;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -31,13 +32,16 @@ public final class LeaderboardDefinition {
     private BarMode barMode;
     private boolean barUseHolderColor;
     private int viewDistance;
+    private int lineWidth;
+    private TextAlignment alignment;
     private LeaderboardAnimations animations;
     private boolean legacyFormat;
 
     public LeaderboardDefinition(String id, LeaderboardType type, File file, Location origin, String worldName,
             LeaderboardSettings settings, LeaderboardFormatting formatting, List<LeaderboardPage> pages,
             Display.Billboard billboard, boolean textShadow, BarMode barMode, boolean barUseHolderColor,
-            int viewDistance, LeaderboardAnimations animations, boolean enabled) {
+            int viewDistance, int lineWidth, TextAlignment alignment, LeaderboardAnimations animations,
+            boolean enabled) {
         this.id = id;
         this.type = type;
         this.file = file;
@@ -54,6 +58,8 @@ public final class LeaderboardDefinition {
         this.barMode = barMode == null ? BarMode.DOTS : barMode;
         this.barUseHolderColor = barUseHolderColor;
         this.viewDistance = viewDistance;
+        this.lineWidth = clampLineWidth(lineWidth);
+        this.alignment = alignment == null ? TextAlignment.CENTER : alignment;
         this.animations = animations.copy();
     }
 
@@ -115,11 +121,13 @@ public final class LeaderboardDefinition {
             legacy = legacy || file.exists();
         }
         int viewDistance = yaml.getInt("view-distance", config.viewDistance());
+        int lineWidth = yaml.getInt("line-width", config.lineWidth());
+        TextAlignment alignment = TextAlignment.fromString(yaml.getString("alignment"), config.alignment());
         LeaderboardAnimations animations = LeaderboardAnimations.from(yaml.getConfigurationSection("animations"),
                 config.animation());
         LeaderboardDefinition definition = new LeaderboardDefinition(id, type, file, location, worldName, settings,
-                formatting, pages, billboard, textShadow, barMode, barUseHolderColor, viewDistance, animations,
-                enabled);
+                formatting, pages, billboard, textShadow, barMode, barUseHolderColor, viewDistance, lineWidth,
+                alignment, animations, enabled);
         definition.legacyFormat = legacy;
         return definition;
     }
@@ -139,6 +147,8 @@ public final class LeaderboardDefinition {
         yaml.set("billboard", toSave.name());
         yaml.set("text-shadow", textShadow);
         yaml.set("view-distance", viewDistance);
+        yaml.set("line-width", lineWidth);
+        yaml.set("alignment", alignment.configName());
         ConfigurationSection barSection = yaml.createSection("bar");
         barSection.set("mode", barMode.name().toLowerCase(java.util.Locale.ROOT));
         barSection.set("use-holder-color", barUseHolderColor);
@@ -258,12 +268,33 @@ public final class LeaderboardDefinition {
         this.viewDistance = viewDistance;
     }
 
+
+    public int lineWidth() {
+        return lineWidth;
+    }
+
+    public void setLineWidth(int lineWidth) {
+        this.lineWidth = clampLineWidth(lineWidth);
+    }
+
+    public TextAlignment alignment() {
+        return alignment;
+    }
+
+    public void setAlignment(TextAlignment alignment) {
+        this.alignment = alignment == null ? TextAlignment.CENTER : alignment;
+    }
+
     public LeaderboardAnimations animations() {
         return animations;
     }
 
     public void setAnimations(LeaderboardAnimations animations) {
         this.animations = animations.copy();
+    }
+
+    private static int clampLineWidth(int lineWidth) {
+        return Math.max(PluginConfig.MIN_LINE_WIDTH, Math.min(PluginConfig.MAX_LINE_WIDTH, lineWidth));
     }
 
     private static Display.Billboard parseBillboard(String value) {

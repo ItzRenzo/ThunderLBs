@@ -623,6 +623,8 @@ public final class RelativeDisplayManager {
         BoardDisplay display = plugin.renderBackend().spawn(leaderboard, displayLocation, new DisplayOptions()
                 .billboard(definition.billboard())
                 .shadowed(definition.textShadow())
+                .lineWidth(definition.lineWidth())
+                .alignment(definition.alignment())
                 .opacity(animation.opacity())
                 .interpolationDuration(ANIMATION_INTERPOLATION_TICKS)
                 .teleportDuration(GLIDE_TICKS)
@@ -780,11 +782,16 @@ public final class RelativeDisplayManager {
         String color = context.color();
         if (!rankMissing) {
             try {
-                color = config.formatting().rankColor(Integer.parseInt(rankStr.trim()), color);
+                color = definition.formatting().rankColor(
+                        Integer.parseInt(rankStr.trim()), config.formatting(), color);
             } catch (NumberFormatException ignored) {}
         }
+
+
+
         return definition.formatting().renderRelative(
-                color, positionStr, rankStr, playerName, valueStr, context.icon());
+                color, positionStr, rankStr, playerName, valueStr, context.icon(),
+                placeholderBridge.patterns(player));
     }
 
     private String resolveGroupName(Player player,

@@ -5,6 +5,7 @@ import exposed.thunder.thunderLBs.leaderboard.Leaderboard;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
 import exposed.thunder.thunderLBs.render.RenderBackend;
+import exposed.thunder.thunderLBs.render.TextAlignment;
 import exposed.thunder.thunderLBs.scheduler.RegionTaskScheduler;
 import exposed.thunder.thunderLBs.util.VersionSupport;
 import org.bukkit.Color;
@@ -58,6 +59,7 @@ public final class EntityRenderBackend implements RenderBackend {
             display.setBrightness(new Display.Brightness(15, 15));
             display.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
             display.setLineWidth(options.lineWidth());
+            display.setAlignment(paperAlignment(options.alignment()));
             display.setViewRange(options.viewRange());
             display.text(options.text());
             display.setTextOpacity(options.opacity());
@@ -84,6 +86,15 @@ public final class EntityRenderBackend implements RenderBackend {
             scheduler.execute(options.viewer(), () -> options.viewer().showEntity(plugin, entity), null);
         }
         return new EntityBoardDisplay(entity);
+    }
+
+
+    private static TextDisplay.TextAlignment paperAlignment(TextAlignment alignment) {
+        return switch (alignment) {
+            case LEFT -> TextDisplay.TextAlignment.LEFT;
+            case RIGHT -> TextDisplay.TextAlignment.RIGHT;
+            default -> TextDisplay.TextAlignment.CENTER;
+        };
     }
 
     @Override

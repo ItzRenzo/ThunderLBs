@@ -2,7 +2,9 @@ package exposed.thunder.thunderLBs.commands;
 
 import exposed.thunder.thunderLBs.ThunderLBs;
 import exposed.thunder.thunderLBs.animation.EasingType;
+import exposed.thunder.thunderLBs.config.PluginConfig;
 import exposed.thunder.thunderLBs.leaderboard.BarMode;
+import exposed.thunder.thunderLBs.leaderboard.HolderColor;
 import exposed.thunder.thunderLBs.leaderboard.Leaderboard;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardAnimations;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardDefinition;
@@ -11,6 +13,7 @@ import exposed.thunder.thunderLBs.leaderboard.LeaderboardPage;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardSettings;
 import exposed.thunder.thunderLBs.leaderboard.ValidationIssue;
 import exposed.thunder.thunderLBs.leaderboard.ValueFormat;
+import exposed.thunder.thunderLBs.render.TextAlignment;
 import io.papermc.paper.dialog.Dialog;
 import io.papermc.paper.dialog.DialogResponseView;
 import io.papermc.paper.registry.data.dialog.ActionButton;
@@ -172,6 +175,17 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                         .initial((float) settings.rowYOffset())
                         .width(INPUT_WIDTH)
                         .build(),
+                DialogInput.numberRange("line_width", Component.text("Line width (px)", ACCENT),
+                                (float) PluginConfig.MIN_LINE_WIDTH, (float) PluginConfig.MAX_LINE_WIDTH)
+                        .step(10.0F)
+                        .initial((float) definition.lineWidth())
+                        .width(INPUT_WIDTH)
+                        .build(),
+                select("alignment", "Alignment", List.of(
+                        option("center", "Center", definition.alignment() == TextAlignment.CENTER),
+                        option("left", "Left", definition.alignment() == TextAlignment.LEFT),
+                        option("right", "Right", definition.alignment() == TextAlignment.RIGHT)
+                )),
                 DialogInput.bool("relative", Component.text("Show viewer rank line", ACCENT),
                         settings.showRelativePosition(), "true", "false")
         );
@@ -189,6 +203,9 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                     current.setViewDistance(Math.round(number(response, "view_distance", 4.0F)));
                     current.settings().setRowYOffset(number(response, "row_y_offset",
                             (float) current.settings().rowYOffset()));
+                    current.setLineWidth(Math.round(number(response, "line_width",
+                            (float) current.lineWidth())));
+                    current.setAlignment(TextAlignment.fromString(text(response, "alignment"), current.alignment()));
                     current.settings().setShowRelativePosition(bool(response, "relative", false));
                     finishSave(editor, current, () -> openBoard(editor, id), () -> openLayout(editor, id));
                 },
@@ -495,7 +512,7 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                 ? select("holder", "Holder ID", choiceOptions(holderChoices, page.holderId(), false))
                 : textInput("holder", "Holder ID", page.holderId(), 128));
         inputs.add(textInput("title", "Title", page.title(), 256));
-        inputs.add(textInput("color", "Color", page.color(), 64));
+        inputs.add(textInput("color", "Color / gradient", page.color(), HolderColor.MAX_INPUT_LENGTH));
         inputs.add(textInput("icon", "Icon", page.icon(), 64));
         inputs.add(select("format", "Value format", enumOptions(ValueFormat.values(), page.valueFormat().name())));
         inputs.add(textInput("prefix", "Value prefix (optional)", page.prefix(), 128));
@@ -736,7 +753,7 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                 .append(Component.text(page.holderId(), NamedTextColor.WHITE))
                 .append(Component.newline())
                 .append(Component.text("Display color: ", ACCENT))
-                .append(Component.text(page.color(), holderColor(page.color())))
+                .append(holderColorPreview(page.color(), page.color()))
                 .append(Component.newline())
                 .append(Component.text("Value format: ", ACCENT))
                 .append(Component.text(friendly(page.valueFormat().name()), NamedTextColor.WHITE))
@@ -769,8 +786,16 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
     }
 
     private Component holderLabel(LeaderboardPage page) {
-        return Component.text(page.icon() + " " + page.title(), holderColor(page.color()))
+        return holderColorPreview(page.icon() + " " + page.title(), page.color())
                 .decoration(TextDecoration.BOLD, false);
+    }
+
+    private Component holderColorPreview(String text, String color) {
+        if (HolderColor.isGradient(color)) {
+            String escaped = plugin.miniMessage().escapeTags(text == null ? "" : text);
+            return plugin.deserializeMiniMessage(HolderColor.wrap(escaped, color));
+        }
+        return Component.text(text == null ? "" : text, holderColor(color));
     }
 
     private TextColor holderColor(String value) {

@@ -62,7 +62,7 @@ public final class LeaderboardManager {
         this.folder = new File(plugin.getDataFolder(), "leaderboards");
         this.backupFolder = new File(plugin.getDataFolder(), "backups");
         this.trashFolder = new File(plugin.getDataFolder(), "trash");
-        this.validator = new LeaderboardValidator();
+        this.validator = new LeaderboardValidator(config.textMeasurer());
         if (!folder.exists() && !folder.mkdirs()) {
             plugin.getLogger().warning("Failed to create leaderboards directory at " + folder.getAbsolutePath());
         }
@@ -169,7 +169,12 @@ public final class LeaderboardManager {
                 config.formatting().row(),
                 config.formatting().relative(),
                 config.bar().background(),
-                config.bar().foreground());
+                config.bar().foreground(),
+                java.util.List.of(),
+                java.util.Map.of(),
+                null,
+                config.padPass(),
+                config.rowNormalizer());
         LeaderboardPage page = new LeaderboardPage(
                 initialHolder,
                 initialHolder.toUpperCase(Locale.ROOT),
@@ -197,6 +202,8 @@ public final class LeaderboardManager {
                 config.bar().mode(),
                 config.bar().useHolderColor(),
                 config.viewDistance(),
+                config.lineWidth(),
+                config.alignment(),
                 animations,
                 true);
         List<ValidationIssue> issues = validator.validate(definition);
@@ -402,6 +409,10 @@ public final class LeaderboardManager {
 
     public List<ValidationIssue> validate(LeaderboardDefinition definition) {
         return validator.validate(definition);
+    }
+
+    public LeaderboardValidator validator() {
+        return validator;
     }
 
     public OperationResult validateFile(String id) {

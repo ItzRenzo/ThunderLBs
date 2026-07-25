@@ -11,6 +11,7 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEn
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
+import exposed.thunder.thunderLBs.render.TextAlignment;
 import exposed.thunder.thunderLBs.util.VersionSupport;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
@@ -85,7 +86,7 @@ final class PacketBoardDisplay implements BoardDisplay {
         this.interpolationDuration = options.interpolationDuration();
         this.teleportDuration = options.teleportDuration();
         this.billboardValue = billboardByte(options.billboard());
-        this.flags = packFlags(options.shadowed(), options.seeThrough());
+        this.flags = packFlags(options.shadowed(), options.seeThrough(), options.alignment());
         this.lineWidth = options.lineWidth();
         this.viewRange = options.viewRange();
     }
@@ -107,7 +108,7 @@ final class PacketBoardDisplay implements BoardDisplay {
         };
     }
 
-    private static byte packFlags(boolean shadowed, boolean seeThrough) {
+    private static byte packFlags(boolean shadowed, boolean seeThrough, TextAlignment alignment) {
         byte value = 0;
         if (shadowed) {
             value |= 0x01;
@@ -115,6 +116,9 @@ final class PacketBoardDisplay implements BoardDisplay {
         if (seeThrough) {
             value |= 0x02;
         }
+
+
+        value |= (byte) alignment.flagBits();
         return value;
     }
 

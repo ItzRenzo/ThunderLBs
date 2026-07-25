@@ -2,10 +2,13 @@ package exposed.thunder.thunderLBs.placeholder;
 
 import exposed.thunder.thunderLBs.ThunderLBs;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardType;
+import exposed.thunder.thunderLBs.util.LegacyFormatting;
 import me.clip.placeholderapi.PlaceholderAPI;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.entity.Player;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -84,7 +87,23 @@ public final class PlaceholderBridge implements AutoCloseable {
                 return "";
             }
         }
-        return resolve(customPlaceholder, player);
+        return resolveCustomProvider(customPlaceholder, player);
+    }
+
+    private String resolveCustomProvider(String placeholder, OfflinePlayer player) {
+        String resolved = resolve(placeholder, player);
+        if (player == null && placeholderApiAvailable && isUnresolved(placeholder, resolved)) {
+
+
+            OfflinePlayer onlineContext = firstAvailable(null, Bukkit.getOnlinePlayers());
+            if (onlineContext != null) {
+                resolved = resolve(placeholder, onlineContext);
+            }
+        }
+
+
+
+        return isEchoedIdentifier(placeholder, resolved) ? placeholder : resolved;
     }
 
     public String resolve(String placeholder, OfflinePlayer player) {
@@ -103,6 +122,62 @@ public final class PlaceholderBridge implements AutoCloseable {
 
     public String resolve(String placeholder) {
         return resolve(placeholder, null);
+    }
+
+
+    public PatternPlaceholders patterns(OfflinePlayer context) {
+        if (!placeholderApiAvailable) {
+            return PatternPlaceholders.NONE;
+        }
+        Map<String, String> memo = new HashMap<>(4);
+        return pattern -> PlaceholderPatterns.resolve(pattern, placeholder -> memo.computeIfAbsent(
+                placeholder, raw -> LegacyFormatting.toMiniMessage(resolve(raw, context))));
+    }
+
+
+    public OfflinePlayer holderContext(String name) {
+        if (!placeholderApiAvailable || name == null || name.isBlank()) {
+            return null;
+        }
+        Player online = Bukkit.getPlayerExact(name);
+        if (online != null) {
+            return online;
+        }
+        return Bukkit.getOfflinePlayerIfCached(name);
+    }
+
+    static boolean isUnresolved(String placeholder, String resolved) {
+        return resolved == null
+                || resolved.equalsIgnoreCase(placeholder == null ? "" : placeholder)
+                || isEchoedIdentifier(placeholder, resolved);
+    }
+
+    static boolean isEchoedIdentifier(String placeholder, String resolved) {
+        if (placeholder == null || resolved == null
+                || placeholder.length() < 4
+                || placeholder.charAt(0) != '%'
+                || placeholder.charAt(placeholder.length() - 1) != '%'
+                || placeholder.indexOf('%', 1) != placeholder.length() - 1) {
+            return false;
+        }
+        int identifierSeparator = placeholder.indexOf('_', 1);
+        if (identifierSeparator < 0 || identifierSeparator >= placeholder.length() - 2) {
+            return false;
+        }
+        String requestIdentifier = placeholder.substring(identifierSeparator + 1, placeholder.length() - 1);
+        return resolved.equalsIgnoreCase(requestIdentifier);
+    }
+
+    static <T> T firstAvailable(T requested, Iterable<? extends T> fallbacks) {
+        if (requested != null) {
+            return requested;
+        }
+        for (T fallback : fallbacks) {
+            if (fallback != null) {
+                return fallback;
+            }
+        }
+        return null;
     }
 
     private List<String> nativeChoices(

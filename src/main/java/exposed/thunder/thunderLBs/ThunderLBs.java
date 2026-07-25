@@ -3,6 +3,8 @@ package exposed.thunder.thunderLBs;
 import exposed.thunder.thunderLBs.commands.LeaderboardsCommand;
 import exposed.thunder.thunderLBs.config.ConfigMigrator;
 import exposed.thunder.thunderLBs.config.PluginConfig;
+import exposed.thunder.thunderLBs.font.GlyphWidthBridges;
+import exposed.thunder.thunderLBs.font.GlyphWidthRegistry;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardDefinition;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardManager;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardPage;
@@ -51,6 +53,7 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
             UUID.fromString("c735448a-701d-4152-bd37-a42b8b1acd00")
     );
 
+    private final GlyphWidthRegistry glyphWidths = GlyphWidthRegistry.createDefault();
     private PluginConfig pluginConfig;
     private PlaceholderBridge placeholderBridge;
     private LeaderboardManager leaderboardManager;
@@ -96,6 +99,7 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
                 "leaderboards command not defined in plugin.yml");
         pluginCommand.setExecutor(command);
         pluginCommand.setTabCompleter(command);
+        GlyphWidthBridges.installAvailable(getServer().getPluginManager(), glyphWidths, getLogger());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -253,6 +257,11 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
         return miniMessage;
     }
 
+
+    public GlyphWidthRegistry glyphWidths() {
+        return glyphWidths;
+    }
+
     public Component deserializeMiniMessage(String input) {
         String normalized = input == null ? "" : input;
         Component cached = miniMessageComponentCache.get(normalized);
@@ -272,6 +281,7 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
         if (pluginConfig.renderMode() != previousMode) {
             getLogger().warning("render.mode changed; a server restart is required for it to take effect.");
         }
+        GlyphWidthBridges.installAvailable(getServer().getPluginManager(), glyphWidths, getLogger());
         miniMessageComponentCache.clear();
         leaderboardManager.reloadAnimationCache();
         return leaderboardManager.loadAll();

@@ -14,6 +14,30 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfigMigratorTest {
     @Test
+    void theBundledConfigAlreadyCarriesTheCurrentVersion() throws Exception {
+        // A fresh install writes the bundled file and then runs migrate(). If the
+        // two disagree the very first startup "upgrades" the config and leaves a
+        // config-vN-backup.yml next to it, which reads like something went wrong.
+        assertEquals(ConfigMigrator.CURRENT_VERSION, resource("config.yml").getInt("config-version"));
+    }
+
+    @Test
+    void theDefaultLineWidthClearsTheDefaultPaddingColumn() throws Exception {
+        // These two defaults have to be read together: a <pad:150:...> column
+        // still has a value drawn after it, and anything past line-width wraps
+        // onto a second line. Shipping a line-width that its own padding default
+        // cannot fit makes the stock config look broken the moment someone adds
+        // a pad tag.
+        YamlConfiguration bundled = resource("config.yml");
+        int lineWidth = bundled.getInt("render.line-width");
+        int target = bundled.getInt("formatting.padding.target");
+        assertEquals(PluginConfig.DEFAULT_LINE_WIDTH, lineWidth);
+        assertTrue(lineWidth >= target + 60,
+                "line-width " + lineWidth + " leaves only " + (lineWidth - target)
+                        + "px after the default padding target of " + target);
+    }
+
+    @Test
     void upgradesAddNewFlagsAndRemoveStockNativeProviderPatterns() throws Exception {
         YamlConfiguration config = yaml("""
                 config-version: 2
@@ -172,11 +196,81 @@ class ConfigMigratorTest {
                 resource("messages.yml"),
                 3);
 
-        assertEquals(4, config.getInt("config-version"));
+        assertEquals(ConfigMigrator.CURRENT_VERSION, config.getInt("config-version"));
         assertEquals("topper", config.getString("provider"));
         assertFalse(providers.isSet("topper"));
         assertFalse(providers.isSet("timedtopper"));
         assertEquals("%custom_name%", providers.getString("custom.name"));
+    }
+
+    @Test
+    void versionFiveAddsPaddingAndAlignmentWithoutTouchingCustomisedKeys() throws Exception {
+        YamlConfiguration config = yaml("""
+                config-version: 4
+                render:
+                  mode: entity
+                  view-distance: 24
+                formatting:
+                  row: "<white>%player%</white>"
+                """);
+
+        ConfigMigrator.migrateDocuments(
+                config,
+                yaml("custom:\n  name: \"%custom_name%\"\n"),
+                new YamlConfiguration(),
+                resource("config.yml"),
+                resource("providers.yml"),
+                resource("messages.yml"),
+                4);
+
+        assertEquals(ConfigMigrator.CURRENT_VERSION, config.getInt("config-version"));
+        assertEquals(250, config.getInt("render.line-width"));
+        assertEquals("center", config.getString("render.alignment"));
+        assertTrue(config.getBoolean("formatting.padding.enabled"));
+        assertEquals(150, config.getInt("formatting.padding.target"));
+        assertEquals(".", config.getString("formatting.padding.filler"));
+        assertEquals("fill", config.getString("formatting.padding.mode"));
+        assertEquals("dark_gray", config.getString("formatting.padding.style"));
+        assertEquals("auto", config.getString("formatting.padding.row-width"));
+        assertEquals(8, config.getInt("formatting.padding.fallback-advance"));
+        assertTrue(config.isConfigurationSection("formatting.padding.glyph-widths"));
+        assertTrue(config.getConfigurationSection("formatting.padding.glyph-widths").getKeys(false).isEmpty());
+
+        // Existing boards must render identically after the upgrade.
+        assertEquals("entity", config.getString("render.mode"));
+        assertEquals(24, config.getInt("render.view-distance"));
+        assertEquals("<white>%player%</white>", config.getString("formatting.row"));
+    }
+
+    @Test
+    void versionSixAddsRowWidthToAnAlreadyPaddedConfig() throws Exception {
+        // A config written before row-width existed: the padding block is there and
+        // customised, so only the one new key may appear.
+        YamlConfiguration config = yaml("""
+                config-version: 5
+                formatting:
+                  padding:
+                    enabled: true
+                    target: 125
+                    filler: "."
+                    mode: fill
+                    style: dark_gray
+                    glyph-widths: {}
+                    fallback-advance: 8
+                """);
+
+        ConfigMigrator.migrateDocuments(
+                config,
+                new YamlConfiguration(),
+                new YamlConfiguration(),
+                resource("config.yml"),
+                resource("providers.yml"),
+                resource("messages.yml"),
+                5);
+
+        assertEquals(ConfigMigrator.CURRENT_VERSION, config.getInt("config-version"));
+        assertEquals("auto", config.getString("formatting.padding.row-width"));
+        assertEquals(125, config.getInt("formatting.padding.target"));
     }
 
     @Test

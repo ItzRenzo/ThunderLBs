@@ -2,7 +2,15 @@ package exposed.thunder.thunderLBs.config;
 
 import exposed.thunder.thunderLBs.ThunderLBs;
 import exposed.thunder.thunderLBs.animation.EasingType;
+import exposed.thunder.thunderLBs.font.ConfigGlyphWidths;
+import exposed.thunder.thunderLBs.font.FallbackGlyphWidths;
+import exposed.thunder.thunderLBs.font.GlyphWidthRegistry;
+import exposed.thunder.thunderLBs.font.PadPass;
+import exposed.thunder.thunderLBs.font.PadSettings;
+import exposed.thunder.thunderLBs.font.RowNormalizer;
+import exposed.thunder.thunderLBs.font.TextMeasurer;
 import exposed.thunder.thunderLBs.leaderboard.BarMode;
+import exposed.thunder.thunderLBs.render.TextAlignment;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -36,9 +44,16 @@ public final class PluginConfig {
         }
     }
 
+
+    public static final int MIN_LINE_WIDTH = 50;
+    public static final int MAX_LINE_WIDTH = 4096;
+    public static final int DEFAULT_LINE_WIDTH = 250;
+
     private final ThunderLBs plugin;
     private RenderMode renderMode;
     private int viewDistance;
+    private int lineWidth;
+    private TextAlignment alignment;
     private String providerName;
     private Map<String, Provider> providers;
     private Provider provider;
@@ -47,6 +62,11 @@ public final class PluginConfig {
     private Defaults defaults;
     private Bar bar;
     private Formatting formatting;
+    private ConfigGlyphWidths glyphWidths;
+    private int fallbackGlyphAdvance;
+    private TextMeasurer textMeasurer;
+    private PadPass padPass;
+    private RowNormalizer rowNormalizer;
     private Sounds sounds;
     private Animation animation;
     private Performance performance;
@@ -67,6 +87,9 @@ public final class PluginConfig {
         YamlConfiguration messagesCfg = load("messages.yml");
         this.renderMode = RenderMode.fromString(cfg.getString("render.mode", "packet"), RenderMode.PACKET);
         this.viewDistance = Math.max(4, cfg.getInt("render.view-distance", 48));
+        this.lineWidth = Math.max(MIN_LINE_WIDTH,
+                Math.min(MAX_LINE_WIDTH, cfg.getInt("render.line-width", DEFAULT_LINE_WIDTH)));
+        this.alignment = TextAlignment.fromString(cfg.getString("render.alignment"), TextAlignment.CENTER);
         this.providers = loadProviders(providersCfg);
         String configuredProvider = Objects.toString(cfg.getString("provider", "topper"), "topper")
                 .toLowerCase(Locale.ROOT);
@@ -85,6 +108,18 @@ public final class PluginConfig {
         this.defaults = Defaults.from(cfg);
         this.bar = Bar.from(cfg.getConfigurationSection("bar"));
         this.formatting = Formatting.from(cfg.getConfigurationSection("formatting"));
+        ConfigurationSection padding = cfg.getConfigurationSection("formatting.padding");
+        this.glyphWidths = loadGlyphWidths(padding == null ? null : padding.getConfigurationSection("glyph-widths"));
+        this.fallbackGlyphAdvance = padding == null
+                ? FallbackGlyphWidths.DEFAULT_ADVANCE
+                : padding.getInt("fallback-advance", FallbackGlyphWidths.DEFAULT_ADVANCE);
+        GlyphWidthRegistry widths = plugin.glyphWidths();
+        widths.applyConfig(glyphWidths, fallbackGlyphAdvance);
+        if (this.textMeasurer == null) {
+            this.textMeasurer = new TextMeasurer(widths);
+        }
+        this.padPass = PadPass.create(textMeasurer, formatting.padding());
+        this.rowNormalizer = RowNormalizer.create(textMeasurer, formatting.padding());
         this.sounds = Sounds.from(cfg.getConfigurationSection("sounds"));
         this.animation = Animation.from(cfg.getConfigurationSection("animation"));
         this.performance = Performance.from(cfg.getConfigurationSection("performance"));
@@ -94,6 +129,43 @@ public final class PluginConfig {
 
     private YamlConfiguration load(String name) {
         return YamlConfiguration.loadConfiguration(new File(plugin.getDataFolder(), name));
+    }
+
+
+    static ConfigGlyphWidths loadGlyphWidths(ConfigurationSection section) {
+        if (section == null) {
+            return ConfigGlyphWidths.EMPTY;
+        }
+        Map<Integer, Integer> widths = new LinkedHashMap<>();
+        for (String key : section.getKeys(false)) {
+            int codePoint = parseCodePoint(key);
+            if (codePoint < 0 || !section.isInt(key)) {
+                continue;
+            }
+            int advance = section.getInt(key);
+            if (advance < FallbackGlyphWidths.MIN_ADVANCE || advance > FallbackGlyphWidths.MAX_ADVANCE) {
+                continue;
+            }
+            widths.put(codePoint, advance);
+        }
+        return widths.isEmpty() ? ConfigGlyphWidths.EMPTY : new ConfigGlyphWidths(widths);
+    }
+
+    private static int parseCodePoint(String key) {
+        String trimmed = key == null ? "" : key.trim();
+        if (trimmed.isEmpty()) {
+            return -1;
+        }
+        if (trimmed.length() > 2 && trimmed.regionMatches(true, 0, "U+", 0, 2)) {
+            try {
+                int codePoint = Integer.parseInt(trimmed.substring(2), 16);
+                return Character.isValidCodePoint(codePoint) ? codePoint : -1;
+            } catch (NumberFormatException ignored) {
+                return -1;
+            }
+        }
+        int codePoint = trimmed.codePointAt(0);
+        return Character.charCount(codePoint) == trimmed.length() ? codePoint : -1;
     }
 
     private Map<String, Provider> loadProviders(ConfigurationSection section) {
@@ -126,6 +198,16 @@ public final class PluginConfig {
         return viewDistance;
     }
 
+
+    public int lineWidth() {
+        return lineWidth;
+    }
+
+
+    public TextAlignment alignment() {
+        return alignment;
+    }
+
     public String providerName() {
         return providerName;
     }
@@ -152,6 +234,47 @@ public final class PluginConfig {
 
     public Formatting formatting() {
         return formatting;
+    }
+
+
+    public ConfigGlyphWidths glyphWidths() {
+        return glyphWidths;
+    }
+
+
+    public int fallbackGlyphAdvance() {
+        return fallbackGlyphAdvance;
+    }
+
+
+    public TextMeasurer textMeasurer() {
+        return textMeasurer;
+    }
+
+
+    public PadPass padPass() {
+        return padPass;
+    }
+
+
+    public PadPass padPass(PadSettings settings) {
+        if (settings == null || settings.equals(formatting.padding())) {
+            return padPass;
+        }
+        return PadPass.create(textMeasurer, settings);
+    }
+
+
+    public RowNormalizer rowNormalizer() {
+        return rowNormalizer;
+    }
+
+
+    public RowNormalizer rowNormalizer(PadSettings settings) {
+        if (settings == null || settings.equals(formatting.padding())) {
+            return rowNormalizer;
+        }
+        return RowNormalizer.create(textMeasurer, settings);
     }
 
     public Sounds sounds() {
@@ -286,7 +409,18 @@ public final class PluginConfig {
             String row,
             String relative,
             List<String> circledNumbers,
-            Map<Integer, String> rankColors) {
+            Map<Integer, String> rankColors,
+            PadSettings padding) {
+
+
+        public Formatting(String title,
+                String row,
+                String relative,
+                List<String> circledNumbers,
+                Map<Integer, String> rankColors) {
+            this(title, row, relative, circledNumbers, rankColors, PadSettings.defaults());
+        }
+
         private static Formatting from(ConfigurationSection section) {
             if (section == null) {
                 return new Formatting(defaultTitle(), defaultRow(), defaultRow(), defaultCircled(), Map.of());
@@ -300,10 +434,11 @@ public final class PluginConfig {
                     section.getString("row", defaultRow()),
                     section.getString("relative", defaultRow()),
                     Collections.unmodifiableList(circled),
-                    loadRankColors(section.getConfigurationSection("rank-colors")));
+                    loadRankColors(section.getConfigurationSection("rank-colors")),
+                    PadSettings.from(section.getConfigurationSection("padding"), PadSettings.defaults()));
         }
 
-        private static Map<Integer, String> loadRankColors(ConfigurationSection section) {
+        public static Map<Integer, String> loadRankColors(ConfigurationSection section) {
             if (section == null) {
                 return Map.of();
             }

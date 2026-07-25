@@ -14,6 +14,10 @@ softdepend:
   - packetevents
   - ViaVersion
   - ViaBackwards
+  # Custom-font plugins, so their glyph widths can be read for <pad:...> columns.
+  - Nexo
+  - Oraxen
+  - ItemsAdder
 commands:
   leaderboards:
     description: Manage ThunderLBs

@@ -3,7 +3,7 @@
 ############################
 
 # Used for automatic configuration upgrades. Do not change this.
-config-version: 4
+config-version: 6
 
 # How leaderboards are shown to players.
 #   packet: the default when PacketEvents is installed. These aren't spawned
@@ -16,6 +16,19 @@ render:
   # How close (in blocks) a player has to be to see a leaderboard.
   # Can be overridden per board with /lb edit <id> viewdistance <blocks>.
   view-distance: 48
+  # Width in Minecraft font pixels at which a line wraps onto the next one.
+  # This has to clear formatting.padding.target below (150) plus whatever the
+  # row draws after the column, so raising one usually means raising the other.
+  # /lb doctor prints the width each board actually needs, and
+  # /lb edit <id> linewidth <pixels> overrides it for one board.
+  line-width: 250
+  # How each line sits relative to the display's anchor point:
+  #   center: the vanilla default, and what every existing board looks like.
+  #   left:   required for <pad:...> columns to line up, because centered rows
+  #           of different total width get different left edges.
+  #   right:  lines are flush right instead.
+  # Overridable per board with /lb edit <id> alignment <center|left|right>.
+  alignment: center
 
 # Where leaderboard data comes from. Built in: topper, ajleaderboards,
 # timedtopper. Built-ins use native plugin APIs; PlaceholderAPI-backed custom
@@ -60,11 +73,27 @@ bar:
   # holder color.
   use-holder-color: true
   active-color: "#FFFFFF"
-  # Only used when mode is "bar".
+  # Only used when mode is "bar". PlaceholderAPI placeholders work here and
+  # resolve without a player, so use server-wide ones such as %server_online%.
   background: "<#4D4D4D><st>                    </st>"
   foreground: "<#CFCFCF><st>                    </st>"
 
 formatting:
+  # Holder colors may be a named MiniMessage color, a #RRGGBB color, or a
+  # 2-10 stop gradient such as #FF2929:#FF8A00:#FFE600.
+  #
+  # PlaceholderAPI placeholders may be written straight into these formats, and
+  # each resolves against the player that line is about:
+  #   row: "...<white>%vault_prefix%%player%</white>..."
+  #   -> "1. [VIP] Makeinen545 -> 42"
+  # In row, that is the player on that line (no player for a group leaderboard
+  # or an empty slot); in relative, the viewer reading it; in title, nobody, so
+  # only server-wide placeholders apply there. Placeholders resolve before any
+  # padding is measured, so a <pad:...> column still lines up. Legacy & and
+  # section-sign codes an expansion returns are converted, and bold text is
+  # measured as bold (italic does not change width in Minecraft). ThunderLBs'
+  # own tokens above are left alone -- PlaceholderAPI only expands identifiers
+  # containing an underscore.
   title: "<color:%color%>%icon%</color> <bold><color:%color%>%title%</color></bold>"
   row: "<color:%color%>%position%</color> <white>%player%</white> <dark_gray>→</dark_gray> <color:%color%>%value%</color>"
   relative: "<color:%color%>%position%</color> <white>%player%</white> <dark_gray>→</dark_gray> <color:%color%>%value%</color>"
@@ -72,6 +101,8 @@ formatting:
   # silver and bronze for the top three. Positions not listed here keep the
   # page's color. Also applies to the relative line when the viewer holds one
   # of these ranks. Replace {} with the example values below to enable it.
+  # Both rank-colors and circled-numbers can also be set per leaderboard in
+  # the formatting section of its file, overriding the values here.
   rank-colors: {}
   # rank-colors:
   #   1: "#FFD700"
@@ -88,6 +119,51 @@ formatting:
     - "⑧"
     - "⑨"
     - "⑩"
+  # Column alignment. Put <pad:...> in any title, row or relative format and
+  # ThunderLBs measures the visible text before it in Minecraft font pixels,
+  # then inserts filler until that column is reached:
+  #   row: "...<white>%player%</white><pad:150:.><color:%color%>%value%</color>"
+  #   -> "1. Makeinen545..............x50 (MAX)"
+  #
+  # <pad[:TARGET[:FILLER[:MODE[:STYLE]]]]>
+  #   TARGET - column in pixels (1-4096), or +N for N pixels past the cursor
+  #   FILLER - repeated characters; quote it if it contains : < > or spaces
+  #   MODE   - fill (default) text after the tag STARTS at the column
+  #            right         text after the tag ENDS at the column
+  #   STYLE  - a color, a gradient, or %color% for the holder color
+  # Anything omitted falls back to the values below.
+  #
+  # Text already past TARGET is left alone: no filler, and nothing is cut off.
+  # Write \<pad> for a literal tag.
+  padding:
+    enabled: true
+    # render.line-width (250) has to stay past this plus whatever follows the
+    # column, or rows wrap onto a second line. Raise both together, and run
+    # /lb doctor to see what each board needs.
+    target: 150
+    filler: "."
+    mode: fill
+    style: "dark_gray"
+    # Every row of a page is widened to this width with invisible trailing
+    # spaces. Without it a column still looks ragged: a text display always
+    # centres its text on the hologram's anchor, so rows of different total width
+    # begin at different x. (render.alignment cannot fix this -- it only arranges
+    # lines within one display, and each row is a single line.)
+    #   auto  the widest row on the page. Nothing to tune, but the whole board
+    #         shifts a little whenever the widest row changes.
+    #   <n>   a fixed width in pixels, which never shifts. A row wider than it is
+    #         left alone, so pick something past your longest row.
+    #   off   leave every row at its natural width.
+    # auto only applies to a row format that really contains a <pad:...> tag, so
+    # boards without one are untouched. A fixed width always applies.
+    row-width: auto
+    # Pixel widths for characters ThunderLBs cannot measure, such as glyphs from
+    # a custom resource pack. Keys are the character itself or U+XXXX.
+    glyph-widths: {}
+    # glyph-widths:
+    #   "U+E001": 12
+    # Assumed width for any character still left without one.
+    fallback-advance: 8
 
 sounds:
   # Sound that plays during the "typing" animation on each board page's title.

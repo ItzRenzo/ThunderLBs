@@ -2,6 +2,7 @@ package exposed.thunder.thunderLBs.commands;
 
 import exposed.thunder.thunderLBs.ThunderLBs;
 import exposed.thunder.thunderLBs.animation.EasingType;
+import exposed.thunder.thunderLBs.config.PluginConfig;
 import exposed.thunder.thunderLBs.leaderboard.BarMode;
 import exposed.thunder.thunderLBs.leaderboard.Leaderboard;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardDefinition;
@@ -13,6 +14,7 @@ import exposed.thunder.thunderLBs.leaderboard.LeaderboardType;
 import exposed.thunder.thunderLBs.leaderboard.ValueFormat;
 import exposed.thunder.thunderLBs.leaderboard.ValidationIssue;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge.ProviderValue;
+import exposed.thunder.thunderLBs.render.TextAlignment;
 import exposed.thunder.thunderLBs.util.FormattingUtil;
 import exposed.thunder.thunderLBs.util.VersionSupport;
 import net.kyori.adventure.text.Component;
@@ -48,7 +50,8 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
     private static final List<String> ROOT_SUBCOMMANDS = List.of("list", "create", "delete", "restore", "enable",
             "disable", "reload", "validate", "doctor", "tp", "movehere", "info", "edit", "debug", "help");
     private static final List<String> EDIT_OPTIONS = List.of("positions", "holder", "billboard", "yaw", "location",
-            "textshadow", "bar", "viewdistance", "relative", "duration", "animations");
+            "textshadow", "bar", "viewdistance", "linewidth", "alignment", "relative", "duration", "animations");
+    private static final List<String> ALIGNMENTS = List.of("center", "left", "right");
     private static final List<String> HOLDER_ACTIONS = List.of("list", "add", "set", "remove", "interval");
     private static final List<String> INTERVAL_SUGGESTIONS = List.of("alltime", "hourly", "daily", "weekly",
             "monthly", "yearly");
@@ -171,6 +174,10 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
         send(sender, plugin.getPluginConfig().prefixedMessage("created", Map.of(
                 "id", id,
                 "location", FormattingUtil.formatLocation(origin))));
+        if (args.length < 3) {
+            sendPrefixed(sender, "&7No holder given, so &f" + holder + " &7was used. Change it with &f/" + label
+                    + " edit " + id + " holder set 1 <holderId> ...");
+        }
         String path = new java.io.File(manager.folder(), id.toLowerCase(Locale.ROOT) + ".yml").getName();
         send(sender, plugin.getPluginConfig().prefixedMessage("created-file", Map.of("path", path)));
     }
@@ -254,11 +261,12 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
     private void handleValidation(CommandSender sender, String[] args, boolean doctor) {
         if (doctor) {
             sendPrefixed(sender, "&fThunderLBs doctor");
-            send(sender, "&8- &7Render backend: &f" + plugin.renderBackend().name());
+            diagnoseRenderBackend(sender);
             send(sender, "&8- &7PlaceholderAPI: &f" + dependencyState("PlaceholderAPI"));
             send(sender, "&8- &7Provider: &f" + plugin.getPluginConfig().providerName()
                     + " &8(&f" + providerState() + "&8)");
             send(sender, "&8- &7PacketEvents: &f" + dependencyState("packetevents"));
+            diagnoseCustomFonts(sender);
             diagnoseProviderPatterns(sender);
         }
 
@@ -286,6 +294,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
             if (result.success() && issues.isEmpty()) {
                 send(sender, "&a✔ &f" + id + " &7is valid.");
                 if (doctor) {
+                    diagnoseLineWidth(sender, manager.get(id));
                     diagnosePlaceholders(sender, manager.get(id));
                 }
                 continue;
@@ -305,11 +314,56 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                 sendValidationIssue(sender, issue);
             }
             if (doctor && result.success()) {
+                diagnoseLineWidth(sender, manager.get(id));
                 diagnosePlaceholders(sender, manager.get(id));
             }
         }
         sendPrefixed(sender, (errors == 0 ? "" : "&c") + "Validation complete: &f" + errors + " error(s)&7, &f"
                 + warnings + " warning(s)&7.");
+    }
+
+    private void diagnoseRenderBackend(CommandSender sender) {
+        String active = plugin.renderBackend().name();
+        String configured = plugin.getPluginConfig().renderMode().name().toLowerCase(Locale.ROOT);
+        if (active.equalsIgnoreCase(configured)) {
+            send(sender, "&8- &7Render backend: &f" + active);
+            return;
+        }
+        send(sender, "&8- &7Render backend: &f" + active + " &8(&econfigured: " + configured + "&8)");
+        send(sender, "&eWARNING &frender.mode&7: &f" + configured + " &7is not available, so &f" + active
+                + " &7is being used instead. Install PacketEvents or set render.mode to &f" + active + "&7.");
+    }
+
+    private void diagnoseCustomFonts(CommandSender sender) {
+        List<String> present = exposed.thunder.thunderLBs.font.GlyphWidthBridges
+                .detected(Bukkit.getPluginManager());
+        if (present.isEmpty()) {
+            return;
+        }
+        send(sender, "&8- &7Custom fonts: &f" + String.join(", ", present));
+        send(sender, "&eWARNING &fformatting.padding&7: ThunderLBs cannot read their glyph widths, so &f<pad:...>"
+                + " &7assumes &f" + plugin.getPluginConfig().fallbackGlyphAdvance()
+                + "px &7per resource-pack character. Set formatting.padding.glyph-widths for any that measure"
+                + " wrongly.");
+    }
+
+    private void diagnoseLineWidth(CommandSender sender, Leaderboard board) {
+        if (board == null) {
+            return;
+        }
+        LeaderboardDefinition definition = board.definition();
+        int fitted = manager.validator().suggestedLineWidth(definition);
+        if (fitted <= 0) {
+            return;
+        }
+        if (fitted <= definition.lineWidth()) {
+            send(sender, "&8  &7line width &f" + definition.lineWidth() + "px &7fits its widest format (&f"
+                    + fitted + "px &7needed).");
+            return;
+        }
+        send(sender, "&eWARNING &f" + definition.id() + ".line-width&7: &f" + definition.lineWidth()
+                + "px &7is under the &f" + fitted + "px &7its widest format needs. &f/lb edit "
+                + definition.id() + " linewidth " + fitted);
     }
 
     private String dependencyState(String name) {
@@ -491,6 +545,8 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                 + " &7yaw &f" + String.format(Locale.ROOT, "%.1f", def.origin().getYaw()));
         send(sender, "&8- &7Positions: &f" + settings.positions()
                 + " &8| &7View distance: &f" + def.viewDistance() + " blocks");
+        send(sender, "&8- &7Line width: &f" + def.lineWidth() + "px"
+                + " &8| &7Alignment: &f" + def.alignment().configName());
         send(sender, "&8- &7Enabled: &f" + def.enabled()
                 + " &8| &7Relative line: &f" + settings.showRelativePosition());
         send(sender, "&8- &7Billboard: &f" + def.billboard().name().toLowerCase(Locale.ROOT)
@@ -638,6 +694,20 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                     return;
                 }
                 editViewDistance(sender, definition, args[3]);
+            }
+            case "linewidth" -> {
+                if (args.length < 4) {
+                    sendPrefixed(sender, "&cUsage: /leaderboards edit " + id + " linewidth <pixels>");
+                    return;
+                }
+                editLineWidth(sender, definition, args[3]);
+            }
+            case "alignment", "align" -> {
+                if (args.length < 4) {
+                    sendPrefixed(sender, "&cUsage: /leaderboards edit " + id + " alignment <center|left|right>");
+                    return;
+                }
+                editAlignment(sender, definition, args[3]);
             }
             case "relative" -> {
                 if (args.length < 4) {
@@ -940,6 +1010,40 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
         }
     }
 
+    private void editLineWidth(CommandSender sender, LeaderboardDefinition definition, String value) {
+        int pixels;
+        try {
+            pixels = Integer.parseInt(value);
+        } catch (NumberFormatException ex) {
+            sendPrefixed(sender, "&cLine width must be a number of pixels.");
+            return;
+        }
+        if (pixels < PluginConfig.MIN_LINE_WIDTH || pixels > PluginConfig.MAX_LINE_WIDTH) {
+            sendPrefixed(sender, "&cLine width must be between " + PluginConfig.MIN_LINE_WIDTH + " and "
+                    + PluginConfig.MAX_LINE_WIDTH + " pixels.");
+            return;
+        }
+        definition.setLineWidth(pixels);
+        if (saveDefinition(sender, definition)) {
+            sendPrefixed(sender, "Line width set to &f" + definition.lineWidth() + " &7pixels.");
+        }
+    }
+
+    private void editAlignment(CommandSender sender, LeaderboardDefinition definition, String value) {
+        TextAlignment parsed = TextAlignment.fromString(value, null);
+        if (parsed == null) {
+            sendPrefixed(sender, "&cAlignment must be center, left or right.");
+            return;
+        }
+        definition.setAlignment(parsed);
+        if (saveDefinition(sender, definition)) {
+            sendPrefixed(sender, "Alignment set to &f" + definition.alignment().configName() + "&7.");
+            if (parsed != TextAlignment.LEFT) {
+                sendPrefixed(sender, "&7Note: &f<pad:...> &7columns only line up across rows when alignment is left.");
+            }
+        }
+    }
+
     private void editRelative(CommandSender sender, LeaderboardDefinition definition, String value) {
         Boolean parsed = parseBoolean(value);
         if (parsed == null) {
@@ -1148,6 +1252,9 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
         sendHelpLine(sender, "/" + label + " edit", "<id> textshadow <true|false>", "Toggle text shadows", false);
         sendHelpLine(sender, "/" + label + " edit", "<id> bar <dots|bar|none> [useHolderColor]", "Configure the page bar", false);
         sendHelpLine(sender, "/" + label + " edit", "<id> viewdistance <blocks>", "Set the visibility range", false);
+        sendHelpLine(sender, "/" + label + " edit", "<id> linewidth <pixels>", "Set the wrap width", false);
+        sendHelpLine(sender, "/" + label + " edit", "<id> alignment <center|left|right>",
+                "Align lines (left for <pad:...>)", false);
         sendHelpLine(sender, "/" + label + " edit", "<id> relative <true|false>", "Toggle the viewer rank line", false);
         sendHelpLine(sender, "/" + label + " edit", "<id> duration <type> <ticks>", "Adjust timing values", false);
         sendHelpLine(sender, "/" + label + " edit", "<id> billboard <fixed|vertical>", "Change billboard behavior", false);
@@ -1206,6 +1313,9 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                 return partial(args[1], ids);
             }
         }
+        if (root.equals("create") && args.length == 3) {
+            return partial(args[2], holderSuggestions(LeaderboardType.PLAYER));
+        }
         if (root.equals("delete") && args.length == 3) {
             return partial(args[2], List.of("confirm"));
         }
@@ -1232,14 +1342,12 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                     String action = args[3].toLowerCase(Locale.ROOT);
                     if (action.equals("interval")) {
                         if (args.length == 5) {
-                            List<String> indexes = new ArrayList<>();
-                            for (int i = 1; i <= definition.pages().size(); i++) {
-                                indexes.add(String.valueOf(i));
-                            }
-                            return partial(args[4], indexes);
+                            return partial(args[4], indexSuggestions(definition.pages().size()));
                         }
                         if (args.length == 6) {
-                            return partial(args[5], INTERVAL_SUGGESTIONS);
+                            int idx = parseIndexForCompletion(args[4], definition.pages().size());
+                            String current = idx >= 0 ? definition.pages().get(idx).interval() : null;
+                            return partial(args[5], ordered(current, intervalSuggestions(definition.type())));
                         }
                         return Collections.emptyList();
                     }
@@ -1248,27 +1356,23 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                             return Collections.emptyList();
                         }
                         if (args.length == 5) {
-                            List<String> indexes = new ArrayList<>();
-                            for (int i = 1; i <= definition.pages().size(); i++) {
-                                indexes.add(String.valueOf(i));
-                            }
-                            return partial(args[4], indexes);
+                            return partial(args[4], indexSuggestions(definition.pages().size()));
                         }
                         if (action.equals("set") && args.length == 6) {
                             int idx = parseIndexForCompletion(args[4], definition.pages().size());
-                            if (idx >= 0) {
-                                return Collections.singletonList(definition.pages().get(idx).holderId());
-                            }
-                            return Collections.emptyList();
+                            String current = idx >= 0 ? definition.pages().get(idx).holderId() : null;
+                            return partial(args[5], ordered(current, holderSuggestions(definition.type())));
                         }
                     }
-                    if (action.equals("add") || action.equals("set")) {
-                        if (args.length == 9 || args.length == 10) {
-                            List<String> formats = EnumSet.allOf(ValueFormat.class).stream()
-                                    .map(f -> f.name().toLowerCase(Locale.ROOT))
-                                    .collect(Collectors.toList());
-                            return partial(args[8], formats);
-                        }
+                    if (action.equals("add") && args.length == 5) {
+                        return partial(args[4], holderSuggestions(definition.type()));
+                    }
+                    int formatSlot = action.equals("add") ? 8 : action.equals("set") ? 9 : -1;
+                    if (formatSlot >= 0 && args.length == formatSlot + 1) {
+                        List<String> formats = EnumSet.allOf(ValueFormat.class).stream()
+                                .map(f -> f.name().toLowerCase(Locale.ROOT))
+                                .collect(Collectors.toList());
+                        return partial(args[formatSlot], formats);
                     }
                 }
                 case "billboard" -> {
@@ -1293,14 +1397,47 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                         return partial(args[4], BOOLEAN_OPTIONS);
                     }
                 }
+                case "positions" -> {
+                    if (args.length == 4) {
+                        return partial(args[3], ordered(String.valueOf(definition.settings().positions()),
+                                List.of("3", "5", "10", "15", "25")));
+                    }
+                }
                 case "viewdistance" -> {
                     if (args.length == 4) {
-                        return partial(args[3], List.of("32", "48", "64", "96", "128"));
+                        return partial(args[3], ordered(String.valueOf(definition.viewDistance()),
+                                List.of("32", "48", "64", "96", "128")));
+                    }
+                }
+                case "linewidth" -> {
+                    if (args.length == 4) {
+                        List<String> options = new ArrayList<>();
+                        int fitted = manager.validator().suggestedLineWidth(definition);
+                        if (fitted > 0) {
+                            options.add(String.valueOf(fitted));
+                        }
+                        options.add(String.valueOf(definition.lineWidth()));
+                        options.addAll(List.of("250", "300", "400", "600"));
+                        return partial(args[3], ordered(null, options));
+                    }
+                }
+                case "alignment", "align" -> {
+                    if (args.length == 4) {
+                        return partial(args[3], ordered(definition.alignment().name().toLowerCase(Locale.ROOT),
+                                ALIGNMENTS));
                     }
                 }
                 case "duration" -> {
                     if (args.length == 4) {
                         return partial(args[3], DURATION_TYPES);
+                    }
+                    if (args.length == 5) {
+                        return partial(args[4], durationSuggestions(definition, args[3]));
+                    }
+                }
+                case "location" -> {
+                    if (args.length >= 4 && args.length <= 7) {
+                        return locationSuggestions(sender, definition, args);
                     }
                 }
                 case "animations" -> {
@@ -1313,13 +1450,93 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                 }
                 case "yaw" -> {
                     if (args.length == 4) {
-                        return Collections
-                                .singletonList(String.format(Locale.ROOT, "%.1f", definition.origin().getYaw()));
+                        List<String> options = new ArrayList<>();
+                        options.add(String.format(Locale.ROOT, "%.1f", definition.origin().getYaw()));
+                        if (sender instanceof Player player) {
+                            options.add(String.format(Locale.ROOT, "%.1f", player.getLocation().getYaw()));
+                        }
+                        options.addAll(List.of("0.0", "90.0", "180.0", "-90.0"));
+                        return partial(args[3], ordered(null, options));
                     }
                 }
             }
         }
         return Collections.emptyList();
+    }
+
+    private List<String> holderSuggestions(LeaderboardType type) {
+        return plugin.getPlaceholderBridge()
+                .holderChoices(plugin.getPluginConfig().providerName(), type);
+    }
+
+    private List<String> intervalSuggestions(LeaderboardType type) {
+        List<String> choices = plugin.getPlaceholderBridge()
+                .intervalChoices(plugin.getPluginConfig().providerName(), type);
+        return choices.isEmpty() ? INTERVAL_SUGGESTIONS : choices;
+    }
+
+    private static List<String> durationSuggestions(LeaderboardDefinition definition, String type) {
+        LeaderboardSettings settings = definition.settings();
+        return switch (type.toLowerCase(Locale.ROOT)) {
+            case "interval" -> ordered(String.valueOf(settings.intervalTicks()),
+                    List.of("100", "200", "400", "1200"));
+            case "page" -> ordered(String.valueOf(settings.pageDurationTicks()),
+                    List.of("100", "160", "200", "300"));
+            case "rowdelay", "row" -> ordered(String.valueOf(settings.rowDelayTicks()),
+                    List.of("1", "2", "3", "5"));
+            case "typing" -> ordered(String.valueOf(settings.typingIntervalTicks()),
+                    List.of("1", "2", "3"));
+            default -> Collections.emptyList();
+        };
+    }
+
+    private static List<String> locationSuggestions(CommandSender sender, LeaderboardDefinition definition,
+            String[] args) {
+        Location origin = definition.origin();
+        Location here = sender instanceof Player player ? player.getLocation() : null;
+        int slot = args.length - 4;
+        String current = switch (slot) {
+            case 0 -> coordinate(origin.getX());
+            case 1 -> coordinate(origin.getY());
+            case 2 -> coordinate(origin.getZ());
+            default -> String.format(Locale.ROOT, "%.1f", origin.getYaw());
+        };
+        String suggestion = null;
+        if (here != null) {
+            suggestion = switch (slot) {
+                case 0 -> coordinate(here.getX());
+                case 1 -> coordinate(here.getY());
+                case 2 -> coordinate(here.getZ());
+                default -> String.format(Locale.ROOT, "%.1f", here.getYaw());
+            };
+        }
+        return partial(args[args.length - 1],
+                ordered(suggestion, current == null ? List.of() : List.of(current)));
+    }
+
+    private static String coordinate(double value) {
+        return String.format(Locale.ROOT, "%.2f", value);
+    }
+
+    private static List<String> indexSuggestions(int size) {
+        List<String> values = new ArrayList<>(Math.max(0, size));
+        for (int i = 1; i <= size; i++) {
+            values.add(String.valueOf(i));
+        }
+        return values;
+    }
+
+    private static List<String> ordered(String first, List<String> values) {
+        List<String> unique = new ArrayList<>(values.size() + 1);
+        if (first != null && !first.isEmpty()) {
+            unique.add(first);
+        }
+        for (String value : values) {
+            if (value != null && !value.isEmpty() && !unique.contains(value)) {
+                unique.add(value);
+            }
+        }
+        return unique;
     }
 
     private int parseIndexForCompletion(String raw, int size) {
@@ -1334,7 +1551,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
         }
     }
 
-    private List<String> partial(String token, List<String> values) {
+    private static List<String> partial(String token, List<String> values) {
         if (token == null || token.isEmpty()) {
             return values;
         }
