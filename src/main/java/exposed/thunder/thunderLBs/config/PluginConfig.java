@@ -11,6 +11,9 @@ import exposed.thunder.thunderLBs.font.RowNormalizer;
 import exposed.thunder.thunderLBs.font.TextMeasurer;
 import exposed.thunder.thunderLBs.leaderboard.BarMode;
 import exposed.thunder.thunderLBs.render.TextAlignment;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Registry;
+import org.bukkit.SoundCategory;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -23,6 +26,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
 public final class PluginConfig {
     private static final Set<String> NATIVE_PROVIDER_NAMES =
@@ -120,7 +124,8 @@ public final class PluginConfig {
         }
         this.padPass = PadPass.create(textMeasurer, formatting.padding());
         this.rowNormalizer = RowNormalizer.create(textMeasurer, formatting.padding());
-        this.sounds = Sounds.from(cfg.getConfigurationSection("sounds"));
+        this.sounds = Sounds.from(cfg.getConfigurationSection("sounds"),
+                warning -> plugin.getLogger().warning(warning));
         this.animation = Animation.from(cfg.getConfigurationSection("animation"));
         this.performance = Performance.from(cfg.getConfigurationSection("performance"));
         this.messages = Messages.from(messagesCfg);
@@ -473,35 +478,115 @@ public final class PluginConfig {
     }
 
     public record Sounds(Typing typing) {
-        private static Sounds from(ConfigurationSection section) {
-            return new Sounds(Typing.from(section == null ? null : section.getConfigurationSection("typing")));
+        private static Sounds from(ConfigurationSection section, Consumer<String> warnings) {
+            return new Sounds(Typing.from(
+                    section == null ? null : section.getConfigurationSection("typing"), warnings));
         }
 
-        public record Typing(boolean enabled, String key, float volume, float pitchMin, float pitchMax, double radius) {
-            private static Typing from(ConfigurationSection section) {
+        public record Typing(boolean enabled,
+                             String key,
+                             SoundCategory category,
+                             float volume,
+                             float pitchMin,
+                             float pitchMax,
+                             double radius) {
+            static final String DEFAULT_KEY = "minecraft:block.note_block.hat";
+            static final SoundCategory DEFAULT_CATEGORY = SoundCategory.MASTER;
+
+            private static Typing from(ConfigurationSection section, Consumer<String> warnings) {
                 if (section == null) {
-                    return new Typing(true, "minecraft:block.note_block.hat", 0.5F, 1.85F, 2.0F, 16.0D);
+                    return new Typing(true, DEFAULT_KEY, DEFAULT_CATEGORY, 0.5F, 1.85F, 2.0F, 16.0D);
+                }
+                boolean enabled = section.getBoolean("enabled", true);
+                String key = section.getString("key", DEFAULT_KEY);
+                if (enabled) {
+                    warnAboutUnknownSound(key, warnings);
                 }
                 return new Typing(
-                        section.getBoolean("enabled", true),
-                        section.getString("key", "minecraft:block.note_block.hat"),
+                        enabled,
+                        key,
+                        parseCategory(section.getString("category"), warnings),
                         (float) section.getDouble("volume", 0.5D),
                         (float) section.getDouble("pitch-min", 1.85D),
                         (float) section.getDouble("pitch-max", 2.0D),
                         section.getDouble("radius", 16.0D));
             }
+
+            static SoundCategory parseCategory(String raw, Consumer<String> warnings) {
+                if (raw == null || raw.isBlank()) {
+                    return DEFAULT_CATEGORY;
+                }
+                try {
+                    return SoundCategory.valueOf(raw.trim().toUpperCase(Locale.ROOT));
+                } catch (IllegalArgumentException ignored) {
+                    warnings.accept("Unknown sounds.typing.category '" + raw + "'; using "
+                            + DEFAULT_CATEGORY.name().toLowerCase(Locale.ROOT) + ". Valid values: "
+                            + categoryNames() + ".");
+                    return DEFAULT_CATEGORY;
+                }
+            }
+
+            private static String categoryNames() {
+                StringBuilder builder = new StringBuilder();
+                for (SoundCategory category : SoundCategory.values()) {
+                    if (builder.length() > 0) {
+                        builder.append(", ");
+                    }
+                    builder.append(category.name().toLowerCase(Locale.ROOT));
+                }
+                return builder.toString();
+            }
+
+            /**
+             * A key the server does not know is not an error -- resource packs add their own sounds,
+             * and those only exist on the client. But a typo produces exactly the same silence, and
+             * without this there is nothing anywhere to tell the two apart.
+             */
+            private static void warnAboutUnknownSound(String key, Consumer<String> warnings) {
+                NamespacedKey parsed = key == null ? null : NamespacedKey.fromString(key);
+                if (parsed == null) {
+                    warnings.accept("sounds.typing.key '" + key + "' is not a valid sound key, so no "
+                            + "typing sound will play. Expected something like " + DEFAULT_KEY + ".");
+                    return;
+                }
+                try {
+                    if (Registry.SOUNDS.get(parsed) == null) {
+                        warnings.accept("sounds.typing.key '" + key + "' is not a sound this server "
+                                + "knows about. If it comes from a resource pack this is fine; "
+                                + "otherwise check the spelling, because nothing will play.");
+                    }
+                } catch (RuntimeException ignored) {
+                    // No sound registry on this server implementation; skip the check rather than
+                    // failing the whole config load over a diagnostic.
+                }
+            }
         }
     }
 
-    public record Performance(long relativeRefreshTicks) {
+    public record Performance(long relativeRefreshTicks,
+                              long providerCacheTtlTicks,
+                              boolean asyncProviders,
+                              boolean asyncPapi,
+                              boolean sharedPacketSerialization) {
         private static final long DEFAULT_RELATIVE_REFRESH_TICKS = 40L;
+        private static final long DEFAULT_PROVIDER_CACHE_TTL_TICKS = 100L;
         private static final long MAX_REFRESH_TICKS = 20L * 60L * 60L;
 
         static Performance from(ConfigurationSection section) {
-            long relativeRefreshTicks = section == null
-                    ? DEFAULT_RELATIVE_REFRESH_TICKS
-                    : section.getLong("relative-refresh-ticks", DEFAULT_RELATIVE_REFRESH_TICKS);
-            return new Performance(Math.max(1L, Math.min(MAX_REFRESH_TICKS, relativeRefreshTicks)));
+            if (section == null) {
+                return new Performance(DEFAULT_RELATIVE_REFRESH_TICKS, DEFAULT_PROVIDER_CACHE_TTL_TICKS,
+                        true, true, false);
+            }
+            return new Performance(
+                    clampTicks(section.getLong("relative-refresh-ticks", DEFAULT_RELATIVE_REFRESH_TICKS)),
+                    clampTicks(section.getLong("provider-cache-ttl-ticks", DEFAULT_PROVIDER_CACHE_TTL_TICKS)),
+                    section.getBoolean("async-providers", true),
+                    section.getBoolean("async-papi", true),
+                    section.getBoolean("shared-packet-serialization", false));
+        }
+
+        private static long clampTicks(long ticks) {
+            return Math.max(1L, Math.min(MAX_REFRESH_TICKS, ticks));
         }
     }
 

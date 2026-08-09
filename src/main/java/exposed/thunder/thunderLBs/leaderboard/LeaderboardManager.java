@@ -4,7 +4,9 @@ import exposed.thunder.thunderLBs.ThunderLBs;
 import exposed.thunder.thunderLBs.config.PluginConfig;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge;
 import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.configuration.InvalidConfigurationException;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Display;
 
 import java.io.File;
@@ -31,6 +33,7 @@ public final class LeaderboardManager {
     private final File backupFolder;
     private final File trashFolder;
     private final LeaderboardValidator validator;
+    private volatile boolean initialLoadComplete;
 
     public record OperationResult(boolean success, String message, List<ValidationIssue> issues) {
         public static OperationResult success(String message) {
@@ -73,6 +76,94 @@ public final class LeaderboardManager {
     }
 
     public LoadSummary loadAll() {
+        try {
+            return loadAllFiles();
+        } finally {
+            initialLoadComplete = true;
+        }
+    }
+
+    /**
+     * Re-activates leaderboards that were skipped because their world was not loaded yet. World
+     * managers such as Multiverse create their worlds after ThunderLBs enables, and a
+     * {@link Leaderboard} resolves its world once when it is constructed, so affected boards have
+     * to be rebuilt from disk once the world actually exists.
+     *
+     * @return how many leaderboards were activated
+     */
+    public int activateForWorld(World world) {
+        if (world == null || !initialLoadComplete) {
+            return 0;
+        }
+        String targetName = world.getName();
+        int activated = 0;
+        for (String id : configuredIds()) {
+            Leaderboard existing = active.get(id);
+            // Skip only boards bound to this exact World instance. A name match with a different
+            // instance means the world was unloaded and re-created (world managers do this), and
+            // the board is still holding the dead World — it must be rebuilt to see the new one.
+            if (existing != null && existing.world() == world) {
+                continue;
+            }
+            if (!targetName.equalsIgnoreCase(configuredWorldName(id))) {
+                continue;
+            }
+            OperationResult result = reloadDetailed(id);
+            if (result.success()) {
+                activated++;
+                plugin.getLogger().info("Activated leaderboard '" + id + "' now that world '"
+                        + targetName + "' is loaded.");
+            } else {
+                plugin.getLogger().warning("Could not activate leaderboard '" + id + "' after world '"
+                        + targetName + "' loaded: " + result.message());
+            }
+        }
+        return activated;
+    }
+
+    /**
+     * Stops leaderboards bound to a world that is about to unload, while their displays can still
+     * be removed cleanly and before the stale {@link World} reference can pin the unloaded world in
+     * memory. The boards stay registered, so {@link #activateForWorld(World)} rebuilds them if the
+     * world comes back.
+     *
+     * @return how many leaderboards were deactivated
+     */
+    public int deactivateForWorld(World world) {
+        if (world == null) {
+            return 0;
+        }
+        int deactivated = 0;
+        for (Leaderboard leaderboard : active.values()) {
+            if (leaderboard.world() == world) {
+                leaderboard.stop();
+                deactivated++;
+                plugin.getLogger().info("Deactivated leaderboard '" + leaderboard.definition().id()
+                        + "' because world '" + world.getName() + "' is unloading.");
+            }
+        }
+        return deactivated;
+    }
+
+    /**
+     * Reads only the configured world name, so boards that failed to load can be matched against a
+     * newly loaded world without building a full definition.
+     */
+    private String configuredWorldName(String id) {
+        File file = LeaderboardFiles.configFile(folder, id);
+        if (!file.exists()) {
+            return null;
+        }
+        YamlConfiguration yaml = new YamlConfiguration();
+        try {
+            yaml.load(file);
+        } catch (IOException | InvalidConfigurationException ex) {
+            return null;
+        }
+        return yaml.getString("world", "world");
+    }
+
+    private LoadSummary loadAllFiles() {
         if (!folder.exists()) {
             return new LoadSummary(0, 0, 0, List.of());
         }

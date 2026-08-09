@@ -446,7 +446,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
             LeaderboardPage page,
             String type,
             ProviderValue value) {
-        String resolved = plugin.getPlaceholderBridge().resolveProvider(
+        String resolved = plugin.getPlaceholderBridge().resolveProviderNow(
                 plugin.getPluginConfig().providerName(),
                 definition.type(),
                 page.holderId(),

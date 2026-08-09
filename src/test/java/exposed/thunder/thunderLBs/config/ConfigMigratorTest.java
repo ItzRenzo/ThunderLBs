@@ -290,6 +290,71 @@ class ConfigMigratorTest {
         assertFalse(ConfigMigrator.migrateLeaderboardConfiguration(leaderboard));
     }
 
+    @Test
+    void upgradingFromVersionSixAddsTheProviderCacheControls() throws Exception {
+        // The async toggles are the documented escape hatch for a misbehaving PlaceholderAPI
+        // expansion, so an existing install has to actually receive them in its own config.yml
+        // rather than only picking up the defaults silently.
+        YamlConfiguration config = yaml("""
+                config-version: 6
+                performance:
+                  relative-refresh-ticks: 80
+                """);
+
+        ConfigMigrator.migrateDocuments(
+                config,
+                yaml(""),
+                yaml(""),
+                resource("config.yml"),
+                resource("providers.yml"),
+                resource("messages.yml"),
+                6);
+
+        assertEquals(ConfigMigrator.CURRENT_VERSION, config.getInt("config-version"));
+        assertEquals(80L, config.getLong("performance.relative-refresh-ticks"),
+                "a tuned value must survive the upgrade");
+        assertEquals(100L, config.getLong("performance.provider-cache-ttl-ticks"));
+        assertTrue(config.getBoolean("performance.async-providers"));
+        assertTrue(config.getBoolean("performance.async-papi"));
+        assertFalse(config.getComments("performance.async-papi").isEmpty(),
+                "a new key has to arrive with its explanation, or nobody can find the escape hatch");
+    }
+
+    @Test
+    void upgradingFromVersionSevenAddsTheSoundCategory() throws Exception {
+        // Before this key the typing click always went out on the ambient channel, so players who
+        // had that slider down heard nothing whatever key they picked. An existing install has to
+        // actually receive the new default, not just inherit it invisibly.
+        YamlConfiguration config = yaml("""
+                config-version: 7
+                sounds:
+                  typing:
+                    enabled: true
+                    key: "minecraft:block.amethyst_block.chime"
+                    volume: 0.85
+                    pitch-min: 1.2
+                    pitch-max: 2.0
+                    radius: 16
+                """);
+
+        ConfigMigrator.migrateDocuments(
+                config,
+                yaml(""),
+                yaml(""),
+                resource("config.yml"),
+                resource("providers.yml"),
+                resource("messages.yml"),
+                7);
+
+        assertEquals(ConfigMigrator.CURRENT_VERSION, config.getInt("config-version"));
+        assertEquals("master", config.getString("sounds.typing.category"));
+        assertEquals("minecraft:block.amethyst_block.chime", config.getString("sounds.typing.key"),
+                "a chosen sound must survive the upgrade");
+        assertEquals(0.85D, config.getDouble("sounds.typing.volume"));
+        assertFalse(config.getComments("sounds.typing.category").isEmpty(),
+                "the category needs its explanation, or nobody will know why ambient was silent");
+    }
+
     private static YamlConfiguration yaml(String input) throws Exception {
         YamlConfiguration configuration = new YamlConfiguration();
         configuration.loadFromString(input);

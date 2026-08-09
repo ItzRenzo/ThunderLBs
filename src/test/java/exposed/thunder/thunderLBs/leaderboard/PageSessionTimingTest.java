@@ -1,10 +1,12 @@
 package exposed.thunder.thunderLBs.leaderboard;
 
 import exposed.thunder.thunderLBs.animation.EasingType;
+import org.bukkit.Location;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PageSessionTimingTest {
@@ -115,13 +117,46 @@ class PageSessionTimingTest {
     }
 
     @Test
-    void typingBroadcastKeepsConfiguredVolumeWithinNaturalRange() {
-        assertEquals(0.5F, PageSession.typingBroadcastVolume(0.5F, 16.0D));
-        assertEquals(2.0F, PageSession.typingBroadcastVolume(2.0F, 16.0D));
+    void nearbyViewersHearTheTypingSoundFromTheBoardItself() {
+        Location origin = new Location(null, 0.0D, 64.0D, 0.0D);
+
+        assertSame(origin, PageSession.typingEmissionPoint(origin, viewerAt(4.0D, 64.0D, 0.0D), 0.5F));
+        assertSame(origin, PageSession.typingEmissionPoint(origin, viewerAt(8.0D, 64.0D, 0.0D), 0.5F));
     }
 
     @Test
-    void typingBroadcastRaisesVolumeOnlyToReachLargerRadius() {
-        assertEquals(2.0F, PageSession.typingBroadcastVolume(0.5F, 32.0D));
+    void distantViewersGetTheSoundPulledIntoRangeAlongTheirLineOfSight() {
+        // 40 blocks out, well past the 16-block carry of a quiet sound: without this the client
+        // would drop the packet entirely and the board would be silent from anywhere but its feet.
+        Location origin = new Location(null, 0.0D, 64.0D, 0.0D);
+        Location emitted = PageSession.typingEmissionPoint(origin, viewerAt(40.0D, 64.0D, 0.0D), 0.5F);
+
+        assertEquals(32.0D, emitted.getX(), 1.0E-6D, "should sit 8 blocks from the listener");
+        assertEquals(64.0D, emitted.getY(), 1.0E-6D);
+        assertEquals(0.0D, emitted.getZ(), 1.0E-6D, "and stay on the line towards the board");
+    }
+
+    @Test
+    void aLouderSoundCarriesFurtherBeforeItHasToBeMovedCloser() {
+        Location origin = new Location(null, 0.0D, 64.0D, 0.0D);
+
+        // volume 2.0 carries 32 blocks, so a listener 16 out still hears it from the board itself,
+        // where volume 0.5 would already have needed moving.
+        assertSame(origin, PageSession.typingEmissionPoint(origin, viewerAt(0.0D, 64.0D, 16.0D), 2.0F));
+        assertEquals(24.0D,
+                PageSession.typingEmissionPoint(origin, viewerAt(0.0D, 64.0D, 40.0D), 2.0F).getZ(),
+                1.0E-6D,
+                "a listener at z=40 gets it 16 blocks away, twice as far out as at volume 0.5");
+    }
+
+    @Test
+    void aViewerStandingInsideTheBoardDoesNotDivideByZero() {
+        Location origin = new Location(null, 0.0D, 64.0D, 0.0D);
+
+        assertSame(origin, PageSession.typingEmissionPoint(origin, viewerAt(0.0D, 64.0D, 0.0D), 0.5F));
+    }
+
+    private static Leaderboard.Viewer viewerAt(double x, double y, double z) {
+        return new Leaderboard.Viewer(null, x, y, z, 0.0D);
     }
 }

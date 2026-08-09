@@ -6,6 +6,7 @@ import exposed.thunder.thunderLBs.font.PadSettings;
 import exposed.thunder.thunderLBs.font.PadTagScanner;
 import exposed.thunder.thunderLBs.font.RowNormalizer;
 import exposed.thunder.thunderLBs.placeholder.PatternPlaceholders;
+import exposed.thunder.thunderLBs.placeholder.PlaceholderPatterns;
 import org.bukkit.configuration.ConfigurationSection;
 
 import java.util.ArrayList;
@@ -30,6 +31,7 @@ public final class LeaderboardFormatting {
     private final RowNormalizer rowNormalizer;
 
     private final boolean rowPadded;
+    private final boolean relativeLivePatterns;
     private final Template titleTemplate;
     private final Template rowTemplate;
     private final Template relativeTemplate;
@@ -74,6 +76,7 @@ public final class LeaderboardFormatting {
         this.padding = padding == null ? PadPass.DISABLED : padding;
         this.rowNormalizer = rowNormalizer == null ? RowNormalizer.DISABLED : rowNormalizer;
         this.rowPadded = rowPattern != null && !PadTagScanner.find(rowPattern).isEmpty();
+        this.relativeLivePatterns = PlaceholderPatterns.mayContain(relativePattern);
         this.titleTemplate = new Template(titlePattern, "%color%", "%icon%", "%title%");
         this.rowTemplate = new Template(rowPattern, "%color%", "%position%", "%player%", "%value%", "%icon%");
         this.relativeTemplate = new Template(relativePattern,
@@ -196,6 +199,14 @@ public final class LeaderboardFormatting {
     public String renderRelative(String color, String position, String rank, String player, String value,
                                  String icon) {
         return renderRelative(color, position, rank, player, value, icon, PatternPlaceholders.NONE);
+    }
+
+    /**
+     * Whether the relative template contains placeholder patterns that resolve per render. Without
+     * any, the template's output depends only on its arguments, so callers may cache renders.
+     */
+    public boolean relativeHasLivePatterns() {
+        return relativeLivePatterns;
     }
 
 

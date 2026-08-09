@@ -3,7 +3,7 @@
 ############################
 
 # Used for automatic configuration upgrades. Do not change this.
-config-version: 6
+config-version: 8
 
 # How leaderboards are shown to players.
 #   packet: the default when PacketEvents is installed. These aren't spawned
@@ -57,6 +57,30 @@ defaults:
 # at the cost of slower viewer-relative value updates. 20 ticks equal one second.
 performance:
   relative-refresh-ticks: 40
+
+  # Resolved leaderboard values are cached, so rendering never waits on a provider.
+  # This is how long a cached top-row value stays fresh before it is refreshed in the
+  # background; viewer-relative values use relative-refresh-ticks above instead.
+  provider-cache-ttl-ticks: 100
+
+  # Refresh Topper and ajLeaderboards values off the main thread. Both are
+  # thread-safe, so there is no reason to turn this off.
+  async-providers: true
+
+  # Refresh PlaceholderAPI values off the main thread. Whether that is safe depends
+  # on the expansions you have installed, not on ThunderLBs. If an expansion starts
+  # throwing "Asynchronous ... access" errors or a ConcurrentModificationException,
+  # set this to false: refreshes then run on the thread that owns their context —
+  # viewer values on that player's region thread, shared values on the main thread
+  # (the global region on Folia).
+  async-papi: true
+
+  # Packet backend only: serialize each board update once and send the same bytes to
+  # every viewer, instead of re-encoding the packet per player. Worthwhile when many
+  # players watch the same boards at once (for example hundreds at spawn). Per-client
+  # handling such as ViaVersion still applies, because the shared bytes pass through
+  # each player's connection individually.
+  shared-packet-serialization: false
 
 # The bar shown between the title and the rows.
 #   dots: one symbol per page. Pages that have already been shown use their
@@ -167,14 +191,22 @@ formatting:
 
 sounds:
   # Sound that plays during the "typing" animation on each board page's title.
+  # Only the players who can currently see the board are sent it.
   typing:
     enabled: true
     key: "minecraft:block.note_block.hat"
+    # Which volume slider in Options -> Music & Sounds controls this. Leave it on
+    # master unless you want players to be able to mute the board separately:
+    # ambient is the slider people turn off to silence cave sounds, and anything
+    # played through it is inaudible to them.
+    # master, music, record, weather, block, hostile, neutral, player, ambient, voice
+    category: master
     volume: 0.5
     pitch-min: 1.85
     pitch-max: 2.0
-    # A world sound has a natural minimum range of about 16 blocks. Larger
-    # values extend that range by raising the broadcast volume.
+    # How far away (in blocks) the click can still be heard. Unlike a plain world
+    # sound, raising this does not make the sound louder up close -- volume above
+    # is the only loudness control.
     radius: 16
 
 # Animation configurations. You most likely don't need to touch these.

@@ -13,8 +13,10 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,8 +39,17 @@ public final class Leaderboard {
     private final RegionTaskScheduler scheduler;
     private TaskHandle nextPageTask;
     private TaskHandle audienceTask;
-    private final Set<UUID> audience = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, Viewer> audience = new ConcurrentHashMap<>();
     private int pageIndex;
+
+    /**
+     * A player who can currently see this board, together with where they were when the backend last
+     * placed them. The position is carried alongside the player so range checks and positional sounds
+     * never have to call {@code Player#getLocation()} from the board's thread, which under Folia
+     * belongs to whichever region owns the player rather than the one owning the board.
+     */
+    public record Viewer(Player player, double x, double y, double z, double distanceSquared) {
+    }
 
     public Leaderboard(ThunderLBs plugin,
             PluginConfig config,
@@ -63,6 +74,11 @@ public final class Leaderboard {
     }
 
     public void start() {
+        if (world == null) {
+            // There is no region to dispatch to; startOnRegion reports the unloaded world.
+            startOnRegion();
+            return;
+        }
         scheduler.execute(origin, this::startOnRegion);
     }
 
@@ -84,6 +100,12 @@ public final class Leaderboard {
     }
 
     public void stop() {
+        if (world == null) {
+            // Nothing was ever started on a region, so tear down inline rather than dispatching to
+            // a region that does not exist.
+            stopOnRegion();
+            return;
+        }
         scheduler.execute(origin, this::stopOnRegion);
     }
 
@@ -194,9 +216,22 @@ public final class Leaderboard {
         activeSessions.remove(session);
     }
 
-    public void synchronizeViewer(Player player) {
-        audience.add(player.getUniqueId());
-        scheduler.execute(origin, this::synchronizeViewerOnRegion);
+    /**
+     * Records a player as able to see this board, at the given position. Backends call this on every
+     * sweep so the stored position stays fresh; only a player who was not already in the audience
+     * triggers the page check, which is the expensive half.
+     */
+    public void trackViewer(Player player, double x, double y, double z, double distanceSquared) {
+        Viewer previous = audience.put(player.getUniqueId(),
+                new Viewer(player, x, y, z, distanceSquared));
+        if (previous == null) {
+            scheduler.execute(origin, this::synchronizeViewerOnRegion);
+        }
+    }
+
+    /** Everyone currently able to see this board. Safe to iterate from any thread. */
+    public Collection<Viewer> viewers() {
+        return audience.values();
     }
 
     private void synchronizeViewerOnRegion() {
@@ -244,16 +279,22 @@ public final class Leaderboard {
         for (Player player : Bukkit.getOnlinePlayers()) {
             UUID playerId = player.getUniqueId();
             online.add(playerId);
+            // Runs on the thread owning the player, which is the only one allowed to read their
+            // location; the position it finds is then published for the board's thread to reuse.
             scheduler.executeDelayed(player, () -> {
-                if (world != null && world.equals(player.getWorld())
-                        && player.getLocation().distanceSquared(origin) <= rangeSquared) {
-                    audience.add(playerId);
+                Location location = player.getLocation();
+                double distanceSquared = world != null && world.equals(player.getWorld())
+                        ? location.distanceSquared(origin)
+                        : Double.MAX_VALUE;
+                if (distanceSquared <= rangeSquared) {
+                    trackViewer(player, location.getX(), location.getY(), location.getZ(),
+                            distanceSquared);
                 } else {
                     audience.remove(playerId);
                 }
             }, () -> audience.remove(playerId), 1L);
         }
-        audience.retainAll(online);
+        audience.keySet().retainAll(online);
     }
 
     boolean isOriginChunkLoaded() {

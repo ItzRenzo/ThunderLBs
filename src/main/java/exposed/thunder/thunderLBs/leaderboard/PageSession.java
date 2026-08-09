@@ -8,6 +8,7 @@ import exposed.thunder.thunderLBs.placeholder.PatternPlaceholders;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderBridge.ProviderValue;
 import exposed.thunder.thunderLBs.placeholder.PlaceholderPatterns;
+import exposed.thunder.thunderLBs.placeholder.ProviderQueries;
 import exposed.thunder.thunderLBs.render.BoardDisplay;
 import exposed.thunder.thunderLBs.render.DisplayOptions;
 import exposed.thunder.thunderLBs.render.RenderBackend;
@@ -16,9 +17,9 @@ import exposed.thunder.thunderLBs.scheduler.TaskHandle;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
-import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Player;
 import org.bukkit.util.Vector;
 
 import java.util.ArrayList;
@@ -38,6 +39,9 @@ final class PageSession {
     private static final int BAR_INITIAL_INTERPOLATION = 1;
     private static final int BAR_FADE_TICKS = 10;
     private static final double BAR_DEPTH_OFFSET = 0.01D;
+    // Half of the audible range: far enough out that the sound still reads as coming from the board,
+    // close enough in that linear falloff has not eaten much of the volume yet.
+    private static final double COMFORTABLE_RANGE_FRACTION = 0.5D;
 
     private static final Pattern HEX_COLOR_TAG = Pattern.compile("<#([A-Fa-f0-9]{3,6})>");
     private static final Pattern COLOR_TAG = Pattern.compile("<color:([^>]+)>");
@@ -62,6 +66,13 @@ final class PageSession {
     private final List<TaskHandle> tasks;
     private final List<FrameAnimation> frameAnimations;
     private final RegionTaskScheduler scheduler;
+    private static final long ROW_BACKFILL_PERIOD_TICKS = 40L;
+    private static final int ROW_BACKFILL_MAX_ATTEMPTS = 15;
+
+    private final List<String> rowStrings = new ArrayList<>();
+    private final List<Component> rowComponents = new ArrayList<>();
+    private BoardDisplay[] rowDisplays = new BoardDisplay[0];
+    private boolean rowsPending;
 
     private PatternPlaceholders boardPlaceholders = PatternPlaceholders.NONE;
     private TaskHandle frameAnimationTask;
@@ -127,6 +138,9 @@ final class PageSession {
         spawnTitle(world);
         spawnBar(world);
         spawnRows(world, entries);
+        if (rowsPending) {
+            scheduleRowBackfill();
+        }
     }
 
     public void stop() {
@@ -171,43 +185,47 @@ final class PageSession {
     }
 
     private List<RowEntry> prepareEntries() {
+        PluginConfig.Provider provider = config.provider();
+        boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), definition.type());
+        if (definition.type() == LeaderboardType.GROUP && !nativeProvider && !provider.supportsGroups()) {
+            plugin.getLogger().warning("Provider '" + config.providerName()
+                    + "' has no group placeholders configured; leaderboard '" + definition.id()
+                    + "' will not resolve.");
+        }
+        RowRender render = renderRows();
+        List<String> normalized = render.normalized();
+        List<RowEntry> rows = new ArrayList<>(normalized.size());
+        rowStrings.clear();
+        rowComponents.clear();
+        rowDisplays = new BoardDisplay[normalized.size()];
+        for (int i = 0; i < normalized.size(); i++) {
+            rowStrings.add(normalized.get(i));
+            rowComponents.add(plugin.deserializeMiniMessage(normalized.get(i)));
+            rows.add(new RowEntry(render.offsets().get(i), i));
+        }
+        rowsPending = render.pending();
+        return rows;
+    }
+
+    /** One full render pass over the rows: the strings to show, their offsets, and whether any
+     * provider value was still loading in the background when it was read. */
+    private RowRender renderRows() {
         int positions = Math.max(1, definition.settings().positions());
         List<String> circled = definition.formatting().circledNumbers(config.formatting());
-        List<RowEntry> rows = new ArrayList<>(positions);
-
-
         List<String> rendered = new ArrayList<>(positions);
         List<Double> offsets = new ArrayList<>(positions);
         PluginConfig.Provider provider = config.provider();
         boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), definition.type());
-        String namePattern;
-        String valuePattern;
-        if (definition.type() == LeaderboardType.GROUP) {
-            namePattern = provider.groupName();
-            valuePattern = provider.groupValue();
-            if (!nativeProvider && !provider.supportsGroups()) {
-                plugin.getLogger().warning("Provider '" + config.providerName()
-                        + "' has no group placeholders configured; leaderboard '" + definition.id()
-                        + "' will not resolve.");
-            }
-        } else {
-            namePattern = provider.name();
-            valuePattern = provider.value();
-        }
+        boolean pending = false;
         String holderId = page.holderId();
         String interval = page.interval();
-        namePattern = PluginConfig.Provider.applyInterval(namePattern, interval).replace("%holder%", holderId);
-        valuePattern = PluginConfig.Provider.applyInterval(valuePattern, interval).replace("%holder%", holderId);
+        ProviderQueries queries = ProviderQueries.create(config.providerName(), provider,
+                definition.type(), holderId, interval, nativeProvider);
         for (int index = 1; index <= positions; index++) {
-            String position = Integer.toString(index);
-            String namePlaceholder = namePattern.replace("%position%", position);
-            String valuePlaceholder = valuePattern.replace("%position%", position);
-            String nameSource = nativeProvider
-                    ? nativeSource("top_name", position)
-                    : namePlaceholder;
-            String valueSource = nativeProvider
-                    ? nativeSource("top_value_raw", position)
-                    : valuePlaceholder;
+            String namePlaceholder = queries.topNamePlaceholder(index);
+            String valuePlaceholder = queries.topValuePlaceholder(index);
+            String nameSource = queries.topNameSource(index);
+            String valueSource = queries.topValueSource(index);
 
             String resolvedName = placeholderBridge.resolveProvider(
                     config.providerName(),
@@ -231,6 +249,9 @@ final class PageSession {
                     null,
                     valuePlaceholder);
             logPlaceholder("value", index, valueSource, resolvedValue);
+            // A null resolution is precisely "the cache's first background load is still in
+            // flight" — the signal that this render needs a backfill pass once the load lands.
+            pending |= resolvedName == null || resolvedValue == null;
             String rawValue = sanitize(resolvedValue, valueSource);
             String formattedValue = page.valueFormat().format(rawValue);
             if (page.hasPrefix()) {
@@ -249,18 +270,53 @@ final class PageSession {
                     rowPlaceholders(playerName)));
         }
 
-
-
-
-        List<String> normalized = definition.formatting().normalizeRows(rendered);
-        for (int i = 0; i < normalized.size(); i++) {
-            rows.add(new RowEntry(offsets.get(i), plugin.deserializeMiniMessage(normalized.get(i))));
-        }
-        return rows;
+        return new RowRender(definition.formatting().normalizeRows(rendered), offsets, pending);
     }
 
-    private String nativeSource(String query, String position) {
-        return config.providerName() + ":" + page.holderId() + ";" + query + ";" + position;
+    /**
+     * Rows are rendered once at page start, but the provider cache resolves in the background —
+     * the very first ask for a value returns nothing and the row shows the missing text. This task
+     * re-renders shortly after start and swaps updated text onto the spawned rows, so a cold start
+     * shows real values within a couple of seconds instead of a blank page.
+     */
+    private void scheduleRowBackfill() {
+        TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
+            int attempts = 0;
+
+            @Override
+            public void accept(TaskHandle task) {
+                if (!ensureSessionActive()) {
+                    task.cancel();
+                    return;
+                }
+                attempts++;
+                boolean stillPending = refreshRowText();
+                if (!stillPending || attempts >= ROW_BACKFILL_MAX_ATTEMPTS) {
+                    task.cancel();
+                }
+            }
+        }, ROW_BACKFILL_PERIOD_TICKS, ROW_BACKFILL_PERIOD_TICKS);
+        tasks.add(task);
+    }
+
+    /** Re-renders the rows and pushes changed text to already-spawned displays. Rows that have not
+     * spawned yet pick the new component up from {@code rowComponents} when their turn comes. */
+    private boolean refreshRowText() {
+        RowRender render = renderRows();
+        List<String> normalized = render.normalized();
+        for (int i = 0; i < normalized.size() && i < rowStrings.size(); i++) {
+            if (normalized.get(i).equals(rowStrings.get(i))) {
+                continue;
+            }
+            rowStrings.set(i, normalized.get(i));
+            Component component = plugin.deserializeMiniMessage(normalized.get(i));
+            rowComponents.set(i, component);
+            BoardDisplay display = rowDisplays[i];
+            if (display != null && !display.isRemoved()) {
+                display.text(component);
+            }
+        }
+        return render.pending();
     }
 
     private String sanitize(String value, String placeholder) {
@@ -301,11 +357,11 @@ final class PageSession {
     }
 
     private void scheduleTitleTyping(BoardDisplay display) {
-        String fullTitle = page.title();
+        String fullTitle = page.title() == null ? "" : page.title();
         long interval = Math.max(1L, definition.settings().typingIntervalTicks());
         PluginConfig.Sounds.Typing typing = config.sounds().typing();
         Location base = origin;
-        List<Component> characters = toPartialComponents(fullTitle);
+        int steps = Math.max(1, fullTitle.length());
         TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             int index = 0;
 
@@ -315,11 +371,14 @@ final class PageSession {
                     task.cancel();
                     return;
                 }
-                if (index >= characters.size()) {
+                if (index >= steps) {
                     task.cancel();
                     return;
                 }
-                display.text(characters.get(index));
+                // One prefix is rendered and parsed per typing tick; pre-building every partial
+                // title would be O(length^2) MiniMessage work in a single tick.
+                int end = Math.min(index + 1, fullTitle.length());
+                display.text(plugin.deserializeMiniMessage(renderTitle(fullTitle.substring(0, end))));
                 if (typing.enabled()) {
                     playTypingSound(base, typing);
                 }
@@ -329,43 +388,71 @@ final class PageSession {
         tasks.add(task);
     }
 
-    private List<Component> toPartialComponents(String title) {
-        if (title == null || title.isEmpty()) {
-            return List.of(plugin.deserializeMiniMessage(renderTitle("")));
-        }
-        List<Component> parts = new ArrayList<>(title.length());
-        for (int i = 1; i <= title.length(); i++) {
-            parts.add(plugin.deserializeMiniMessage(renderTitle(title.substring(0, i))));
-        }
-        return parts;
-    }
-
     private String renderTitle(String title) {
         return definition.formatting().renderTitle(
                 page.color(), page.icon(), Objects.requireNonNullElse(title, ""), boardPlaceholders);
     }
 
+    /**
+     * Sends the typing click to the players who can actually see this board, rather than
+     * broadcasting it into the world. {@code World#playSound} walks the entire online player list on
+     * every call, which for one sound per title character per tick per board is a lot of scanning to
+     * reach an audience the board already knows.
+     */
     private void playTypingSound(Location base, PluginConfig.Sounds.Typing typing) {
         if (world == null) {
             return;
         }
+        float volume = Math.max(0.0F, typing.volume());
         float pitch = typing.pitchMin()
                 + ThreadLocalRandom.current().nextFloat() * (typing.pitchMax() - typing.pitchMin());
-        world.playSound(
-                base,
-                typing.key(),
-                SoundCategory.AMBIENT,
-                typingBroadcastVolume(typing.volume(), typing.radius()),
-                pitch);
+        double radiusSquared = typing.radius() * typing.radius();
+        for (Leaderboard.Viewer viewer : leaderboard.viewers()) {
+            if (viewer.distanceSquared() > radiusSquared) {
+                continue;
+            }
+            Player player = viewer.player();
+            if (!player.isOnline()) {
+                continue;
+            }
+            player.playSound(
+                    typingEmissionPoint(base, viewer, volume),
+                    typing.key(),
+                    typing.category(),
+                    volume,
+                    pitch);
+        }
     }
 
-    static float typingBroadcastVolume(float configuredVolume, double radius) {
-        float volume = Math.max(0.0F, configuredVolume);
-        double naturalRadius = 16.0D * Math.max(1.0D, volume);
-        if (radius <= naturalRadius) {
-            return volume;
+    /**
+     * Where the click should appear to come from for one viewer.
+     *
+     * <p>A Minecraft sound carries only as far as {@code 16 * max(1, volume)} blocks, and past that
+     * the client simply drops it, so a quiet sound at the board is inaudible to anyone standing back
+     * from it -- while a sound loud enough to carry across the whole view distance is deafening up
+     * close. Volume alone cannot express "quiet, but audible from over there".
+     *
+     * <p>So volume stays purely a loudness control and the emission point moves instead: for a
+     * distant viewer it slides down the line between them and the board until it is comfortably
+     * inside the audible range. The sound still arrives from the board's direction, at the same
+     * loudness, however far away the listener is.
+     */
+    static Location typingEmissionPoint(Location origin, Leaderboard.Viewer viewer, float volume) {
+        double audibleRange = 16.0D * Math.max(1.0D, volume);
+        double comfortableRange = audibleRange * COMFORTABLE_RANGE_FRACTION;
+        double deltaX = origin.getX() - viewer.x();
+        double deltaY = origin.getY() - viewer.y();
+        double deltaZ = origin.getZ() - viewer.z();
+        double distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ);
+        if (distance <= comfortableRange || distance <= 0.0D) {
+            return origin;
         }
-        return (float) (radius / 16.0D);
+        double scale = comfortableRange / distance;
+        return new Location(
+                origin.getWorld(),
+                viewer.x() + deltaX * scale,
+                viewer.y() + deltaY * scale,
+                viewer.z() + deltaZ * scale);
     }
 
     private void scheduleTitleAnimations(BoardDisplay display) {
@@ -859,12 +946,13 @@ final class PageSession {
                 : packOpacity(OPACITY_OPAQUE);
         BoardDisplay row = spawnDisplay(base, baseOptions()
                 .shadowed(definition.textShadow())
-                .text(entry.component())
+                .text(rowComponents.get(entry.index()))
                 .opacity(initialOpacity)
                 .interpolationDuration(ROW_INTERPOLATION)
                 .teleportDuration(ROW_INTERPOLATION)
                 .translation(startOffset * boardScale, 0.0F, 0.0F)
                 .scale(boardScale, boardScale, boardScale));
+        rowDisplays[entry.index()] = row;
         animateRow(row);
     }
 
@@ -1188,7 +1276,13 @@ final class PageSession {
     private record BarPair(BoardDisplay container, BoardDisplay value) {
     }
 
-    private record RowEntry(double offsetY, Component component) {
+    /** A row's vertical offset and its index into {@code rowStrings}/{@code rowComponents}/
+     * {@code rowDisplays}; the component is read from the list at spawn time so a backfill that
+     * lands before the row's delayed spawn still shows the fresh text. */
+    private record RowEntry(double offsetY, int index) {
+    }
+
+    private record RowRender(List<String> normalized, List<Double> offsets, boolean pending) {
     }
 
     record LinearOpacitySplit(int totalTicks, int firstTicks, int secondTicks) {

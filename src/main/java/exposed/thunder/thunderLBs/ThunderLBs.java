@@ -30,6 +30,8 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.world.WorldLoadEvent;
+import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
@@ -89,10 +91,6 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
         getLogger().info("Rendering leaderboards in " + renderBackend.name() + " mode.");
         getServer().getPluginManager().registerEvents(this, this);
         this.leaderboardManager = new LeaderboardManager(this, pluginConfig, placeholderBridge);
-        if (pluginConfig.defaults().cleanupOnStart()) {
-            cleanupDisplays();
-        }
-        this.leaderboardManager.loadAll();
         initializeMetrics();
         LeaderboardsCommand command = new LeaderboardsCommand(this, leaderboardManager);
         PluginCommand pluginCommand = Objects.requireNonNull(getCommand("leaderboards"),
@@ -100,6 +98,39 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
         pluginCommand.setExecutor(command);
         pluginCommand.setTabCompleter(command);
         GlyphWidthBridges.installAvailable(getServer().getPluginManager(), glyphWidths, getLogger());
+        // World managers such as Multiverse create their worlds during their own onEnable, so
+        // Bukkit.getWorld(...) still returns null for them here. Wait for the first tick, by which
+        // point every plugin has enabled and its worlds exist.
+        taskScheduler.runGlobal(this::performInitialLoad);
+    }
+
+    private void performInitialLoad() {
+        if (!isEnabled()) {
+            return;
+        }
+        if (pluginConfig.defaults().cleanupOnStart()) {
+            cleanupDisplays();
+        }
+        leaderboardManager.loadAll();
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onWorldLoad(WorldLoadEvent event) {
+        if (leaderboardManager != null) {
+            leaderboardManager.activateForWorld(event.getWorld());
+        }
+    }
+
+    /**
+     * Runs at MONITOR with cancelled events ignored, so boards are only torn down when the unload
+     * is actually going ahead — and while the world is still loaded, so displays can be removed
+     * cleanly. {@link #onWorldLoad} rebuilds the boards if the world returns.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onWorldUnload(WorldUnloadEvent event) {
+        if (leaderboardManager != null) {
+            leaderboardManager.deactivateForWorld(event.getWorld());
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)

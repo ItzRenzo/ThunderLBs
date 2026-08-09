@@ -22,7 +22,7 @@ import java.util.Set;
 import java.util.logging.Level;
 
 public final class ConfigMigrator {
-    public static final int CURRENT_VERSION = 6;
+    public static final int CURRENT_VERSION = 8;
 
     private static final int LEGACY_VERSION = 1;
     private static final String CONFIG_FILE = "config.yml";
@@ -110,6 +110,12 @@ public final class ConfigMigrator {
         }
         if (sourceVersion < 6) {
             migrateVersionSix(config, defaultConfig);
+        }
+        if (sourceVersion < 7) {
+            migrateVersionSeven(config, defaultConfig);
+        }
+        if (sourceVersion < 8) {
+            migrateVersionEight(config, defaultConfig);
         }
         config.set("config-version", CURRENT_VERSION);
     }
@@ -220,6 +226,25 @@ public final class ConfigMigrator {
 
 
     private static void migrateVersionSix(
+            YamlConfiguration config,
+            YamlConfiguration defaultConfig) {
+        mergeMissing(config, defaultConfig, "");
+    }
+
+    /** Adds the performance.provider-cache-* and performance.async-* controls. */
+    private static void migrateVersionSeven(
+            YamlConfiguration config,
+            YamlConfiguration defaultConfig) {
+        mergeMissing(config, defaultConfig, "");
+    }
+
+    /**
+     * Adds sounds.typing.category. Until now the typing click was hardcoded to the ambient
+     * category, which is the slider players turn off to be rid of cave sounds -- so for anyone who
+     * had, no sound key worked and the setting looked broken. Existing configs are moved to the new
+     * master default rather than keeping the old behaviour, since silence was never the intent.
+     */
+    private static void migrateVersionEight(
             YamlConfiguration config,
             YamlConfiguration defaultConfig) {
         mergeMissing(config, defaultConfig, "");
@@ -389,19 +414,26 @@ public final class ConfigMigrator {
             String prefix) {
         for (String key : defaults.getKeys(false)) {
             String path = prefix.isEmpty() ? key : prefix + "." + key;
-            copyComments(target, defaults, path, key);
             ConfigurationSection defaultChild = defaults.getConfigurationSection(key);
             if (defaultChild != null) {
                 ConfigurationSection targetChild = target.getConfigurationSection(path);
                 if (targetChild == null) {
                     if (target.isSet(path)) {
+                        copyComments(target, defaults, path, key);
                         continue;
                     }
                     target.createSection(path);
                 }
+                // Comments are copied only once the path exists: setting them on a path that has
+                // not been created yet is silently dropped, which is why upgraded configs used to
+                // gain new keys with no explanation attached.
+                copyComments(target, defaults, path, key);
                 mergeMissing(target, defaultChild, path);
-            } else if (!target.isSet(path)) {
-                target.set(path, defaults.get(key));
+            } else {
+                if (!target.isSet(path)) {
+                    target.set(path, defaults.get(key));
+                }
+                copyComments(target, defaults, path, key);
             }
         }
     }
