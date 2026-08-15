@@ -25,6 +25,7 @@ import org.joml.Vector3f;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 final class PacketBoardDisplay implements BoardDisplay {
@@ -258,14 +259,24 @@ final class PacketBoardDisplay implements BoardDisplay {
         return new com.github.retrooper.packetevents.util.Vector3f(vector.x(), vector.y(), vector.z());
     }
 
+    // The setters below skip the broadcast when the client already has the value. Pending
+    // interpolation metadata from interpolation() is not lost by skipping: it only shapes how the
+    // client animates a change, and any send that actually carries a change includes it.
+
     @Override
     public synchronized void text(Component component) {
+        if (Objects.equals(text, component)) {
+            return;
+        }
         this.text = component;
         sendMetadata(List.of(new EntityData<>(INDEX_TEXT, EntityDataTypes.ADV_COMPONENT, text)));
     }
 
     @Override
     public synchronized void opacity(byte opacity) {
+        if (this.opacity == opacity) {
+            return;
+        }
         this.opacity = opacity;
         List<EntityData<?>> data = new ArrayList<>(3);
         data.add(new EntityData<>(INDEX_INTERPOLATION_DELAY, EntityDataTypes.INT, interpolationDelay));
@@ -288,6 +299,10 @@ final class PacketBoardDisplay implements BoardDisplay {
     @Override
     public synchronized void transform(float translationX, float translationY, float translationZ,
                           float scaleX, float scaleY, float scaleZ) {
+        if (translation.equals(translationX, translationY, translationZ)
+                && scale.equals(scaleX, scaleY, scaleZ)) {
+            return;
+        }
         this.translation.set(translationX, translationY, translationZ);
         this.scale.set(scaleX, scaleY, scaleZ);
         List<EntityData<?>> data = new ArrayList<>(4);
@@ -301,6 +316,11 @@ final class PacketBoardDisplay implements BoardDisplay {
     @Override
     public synchronized void transformAndOpacity(float translationX, float translationY, float translationZ,
                                     float scaleX, float scaleY, float scaleZ, byte opacity) {
+        if (this.opacity == opacity
+                && translation.equals(translationX, translationY, translationZ)
+                && scale.equals(scaleX, scaleY, scaleZ)) {
+            return;
+        }
         this.translation.set(translationX, translationY, translationZ);
         this.scale.set(scaleX, scaleY, scaleZ);
         this.opacity = opacity;
