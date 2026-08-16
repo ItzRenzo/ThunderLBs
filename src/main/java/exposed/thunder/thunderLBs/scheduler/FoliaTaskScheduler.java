@@ -21,8 +21,6 @@ final class FoliaTaskScheduler implements RegionTaskScheduler {
     public void execute(Location location, Runnable action) {
         Location anchor = anchorOrNull(location);
         if (anchor == null) {
-            // The world is not loaded, so no region owns this location. Fall back to the global
-            // region so cleanup and shutdown paths still run instead of throwing.
             runGlobal(action);
             return;
         }
@@ -134,9 +132,6 @@ final class FoliaTaskScheduler implements RegionTaskScheduler {
         if (world == null) {
             return null;
         }
-        // Re-resolve by UID: a Location can outlive a world manager's unload/reload cycle, and
-        // dispatching against its stale World instance would target a region that no longer
-        // exists. An unloaded world falls through to the global fallback like a null world does.
         World current = Bukkit.getWorld(world.getUID());
         if (current == null) {
             return null;

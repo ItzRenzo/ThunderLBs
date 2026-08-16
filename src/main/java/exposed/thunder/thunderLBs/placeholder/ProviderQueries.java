@@ -3,18 +3,6 @@ package exposed.thunder.thunderLBs.placeholder;
 import exposed.thunder.thunderLBs.config.PluginConfig;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardType;
 
-/**
- * Builds every placeholder string and debug source one leaderboard page needs.
- *
- * <p>The top-row path and the viewer-relative path previously each did their own
- * {@code applyInterval} / {@code %holder%} / {@code %position%} substitution. Keeping that in one
- * place means they cannot drift apart — which matters because the resulting placeholder is part of
- * the {@link ProviderCache.Key}, so two paths disagreeing by a character would quietly resolve and
- * cache the same value twice.
- *
- * <p>Free of Bukkit types: everything comes from {@link PluginConfig.Provider}, which is a plain
- * record.
- */
 public final class ProviderQueries {
 
     private final String providerName;
@@ -63,7 +51,6 @@ public final class ProviderQueries {
                 group ? bind(provider.groupTeam(), holder, interval) : "");
     }
 
-    /** Resolves everything that is fixed for a page; {@code %position%} is left for later. */
     private static String bind(String pattern, String holder, String interval) {
         String withInterval = PluginConfig.Provider.applyInterval(pattern, interval);
         return withInterval == null ? "" : withInterval.replace("%holder%", holder);
@@ -109,11 +96,6 @@ public final class ProviderQueries {
         return teamPattern;
     }
 
-    /**
-     * The string a resolved value is compared against to decide whether it actually resolved, and
-     * what placeholder debugging reports. For native providers this describes the query rather than
-     * a placeholder, since there is no placeholder involved.
-     */
     public String topNameSource(int position) {
         return nativeProvider ? nativeSource("top_name;" + position) : topNamePlaceholder(position);
     }

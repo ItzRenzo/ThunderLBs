@@ -42,12 +42,6 @@ public final class Leaderboard {
     private final Map<UUID, Viewer> audience = new ConcurrentHashMap<>();
     private int pageIndex;
 
-    /**
-     * A player who can currently see this board, together with where they were when the backend last
-     * placed them. The position is carried alongside the player so range checks and positional sounds
-     * never have to call {@code Player#getLocation()} from the board's thread, which under Folia
-     * belongs to whichever region owns the player rather than the one owning the board.
-     */
     public record Viewer(Player player, double x, double y, double z, double distanceSquared) {
     }
 
@@ -75,7 +69,6 @@ public final class Leaderboard {
 
     public void start() {
         if (world == null) {
-            // There is no region to dispatch to; startOnRegion reports the unloaded world.
             startOnRegion();
             return;
         }
@@ -101,8 +94,6 @@ public final class Leaderboard {
 
     public void stop() {
         if (world == null) {
-            // Nothing was ever started on a region, so tear down inline rather than dispatching to
-            // a region that does not exist.
             stopOnRegion();
             return;
         }
@@ -216,11 +207,6 @@ public final class Leaderboard {
         activeSessions.remove(session);
     }
 
-    /**
-     * Records a player as able to see this board, at the given position. Backends call this on every
-     * sweep so the stored position stays fresh; only a player who was not already in the audience
-     * triggers the page check, which is the expensive half.
-     */
     public void trackViewer(Player player, double x, double y, double z, double distanceSquared) {
         Viewer previous = audience.put(player.getUniqueId(),
                 new Viewer(player, x, y, z, distanceSquared));
@@ -229,7 +215,6 @@ public final class Leaderboard {
         }
     }
 
-    /** Everyone currently able to see this board. Safe to iterate from any thread. */
     public Collection<Viewer> viewers() {
         return audience.values();
     }
@@ -279,8 +264,6 @@ public final class Leaderboard {
         for (Player player : Bukkit.getOnlinePlayers()) {
             UUID playerId = player.getUniqueId();
             online.add(playerId);
-            // Runs on the thread owning the player, which is the only one allowed to read their
-            // location; the position it finds is then published for the board's thread to reuse.
             scheduler.executeDelayed(player, () -> {
                 Location location = player.getLocation();
                 double distanceSquared = world != null && world.equals(player.getWorld())

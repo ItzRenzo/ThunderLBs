@@ -83,14 +83,6 @@ public final class LeaderboardManager {
         }
     }
 
-    /**
-     * Re-activates leaderboards that were skipped because their world was not loaded yet. World
-     * managers such as Multiverse create their worlds after ThunderLBs enables, and a
-     * {@link Leaderboard} resolves its world once when it is constructed, so affected boards have
-     * to be rebuilt from disk once the world actually exists.
-     *
-     * @return how many leaderboards were activated
-     */
     public int activateForWorld(World world) {
         if (world == null || !initialLoadComplete) {
             return 0;
@@ -99,9 +91,6 @@ public final class LeaderboardManager {
         int activated = 0;
         for (String id : configuredIds()) {
             Leaderboard existing = active.get(id);
-            // Skip only boards bound to this exact World instance. A name match with a different
-            // instance means the world was unloaded and re-created (world managers do this), and
-            // the board is still holding the dead World — it must be rebuilt to see the new one.
             if (existing != null && existing.world() == world) {
                 continue;
             }
@@ -121,14 +110,6 @@ public final class LeaderboardManager {
         return activated;
     }
 
-    /**
-     * Stops leaderboards bound to a world that is about to unload, while their displays can still
-     * be removed cleanly and before the stale {@link World} reference can pin the unloaded world in
-     * memory. The boards stay registered, so {@link #activateForWorld(World)} rebuilds them if the
-     * world comes back.
-     *
-     * @return how many leaderboards were deactivated
-     */
     public int deactivateForWorld(World world) {
         if (world == null) {
             return 0;
@@ -145,10 +126,6 @@ public final class LeaderboardManager {
         return deactivated;
     }
 
-    /**
-     * Reads only the configured world name, so boards that failed to load can be matched against a
-     * newly loaded world without building a full definition.
-     */
     private String configuredWorldName(String id) {
         File file = LeaderboardFiles.configFile(folder, id);
         if (!file.exists()) {

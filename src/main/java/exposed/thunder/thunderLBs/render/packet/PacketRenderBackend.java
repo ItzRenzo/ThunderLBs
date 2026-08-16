@@ -21,7 +21,9 @@ import org.bukkit.event.player.PlayerQuitEvent;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.Collection;
@@ -38,6 +40,7 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
     private final RegionTaskScheduler scheduler;
     private final ViewerPositionTracker positions;
     private final ScheduledExecutorService sweepExecutor;
+    private final ExecutorService sendExecutor;
     private final Map<Leaderboard, Channel> channels = new ConcurrentHashMap<>();
 
     public PacketRenderBackend(ThunderLBs plugin) {
@@ -46,8 +49,6 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
         Bukkit.getPluginManager().registerEvents(this, plugin);
         this.positions = new ViewerPositionTracker(plugin);
         this.positions.start();
-        // Range checks are pure arithmetic over packet-sourced positions, and every packet this
-        // backend sends is thread-safe, so the whole sweep runs off the main thread.
         this.sweepExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "ThunderLBs-viewer-sweep");
             thread.setDaemon(true);
@@ -55,6 +56,11 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
         });
         this.sweepExecutor.scheduleAtFixedRate(this::sweepViewers,
                 VIEWER_REFRESH_MILLIS, VIEWER_REFRESH_MILLIS, TimeUnit.MILLISECONDS);
+        this.sendExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "ThunderLBs-packet-sender");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     @Override
@@ -107,6 +113,22 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
                 + "packetevents version; falling back to per-player packet sends: " + error);
     }
 
+    void dispatchSend(Runnable send) {
+        try {
+            sendExecutor.execute(() -> runSend(send));
+        } catch (RejectedExecutionException rejected) {
+            runSend(send);
+        }
+    }
+
+    private void runSend(Runnable send) {
+        try {
+            send.run();
+        } catch (RuntimeException exception) {
+            plugin.getLogger().log(Level.WARNING, "Leaderboard packet send failed", exception);
+        }
+    }
+
     void forget(PacketBoardDisplay display) {
         Channel channel = display.channel();
         if (channel != null) {
@@ -118,8 +140,6 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
     public void shutdown() {
         sweepExecutor.shutdownNow();
         try {
-            // Let an in-flight sweep finish before tearing the channels down, so it cannot send
-            // spawn packets for displays that are about to be destroyed.
             if (!sweepExecutor.awaitTermination(500L, TimeUnit.MILLISECONDS)) {
                 plugin.getLogger().warning("Viewer sweep did not stop in time; continuing shutdown.");
             }
@@ -129,6 +149,14 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
         positions.stop();
         for (Channel channel : channels.values()) {
             channel.destroyAll();
+        }
+        sendExecutor.shutdown();
+        try {
+            if (!sendExecutor.awaitTermination(500L, TimeUnit.MILLISECONDS)) {
+                plugin.getLogger().warning("Packet sender did not drain in time; continuing shutdown.");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
         }
         channels.clear();
         HandlerList.unregisterAll(this);
@@ -158,11 +186,6 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
         syncSoon(event.getPlayer());
     }
 
-    /**
-     * Syncs one player a tick from now. The delay lets the connection settle before the first spawn
-     * packets go out; re-seeding from Bukkit on the way through means this does not depend on the
-     * tracker's own listener having already handled the same event.
-     */
     private void syncSoon(Player player) {
         scheduler.executeDelayed(player, () -> {
             ViewerPositionTracker.Position position = positions.refresh(player);
@@ -181,24 +204,16 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
                 try {
                     synchronizeViewer(player, position);
                 } catch (RuntimeException exception) {
-                    // Isolate per viewer: one half-closed connection must not starve the sync of
-                    // every player ordered after it.
                     plugin.getLogger().log(Level.WARNING,
                             "Leaderboard viewer sync failed for " + player.getName(), exception);
                 }
             });
             purgeOfflineViewers();
         } catch (RuntimeException exception) {
-            // A throw here would silently kill the repeating task, so it stops at the sweep.
             plugin.getLogger().log(Level.WARNING, "Leaderboard viewer sweep failed", exception);
         }
     }
 
-    /**
-     * Drops viewers who are no longer online. A quit racing an in-flight sweep can re-add a player
-     * right after the quit listener removed them, and the position tracker never yields them again
-     * — the sweep itself is the authority, so a ghost entry lives for at most one sweep period.
-     */
     private void purgeOfflineViewers() {
         for (Channel channel : channels.values()) {
             for (Player player : channel.viewers.values()) {
@@ -250,18 +265,12 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
             Player existing = viewers.putIfAbsent(uuid, player);
             if (existing == null || existing != player) {
                 if (existing != null) {
-                    // Same player, new connection: the mapped Player is from before a relog and
-                    // its packets would go nowhere. Replace it and resend the full state.
                     viewers.put(uuid, player);
                 }
-                // Iterate the COW list directly: a size()/get(i) pair races page rotations
-                // shrinking the list, and the iterator is a consistent snapshot.
                 for (PacketBoardDisplay display : displays) {
                     display.sendFullSpawn(player);
                 }
             }
-            // Every sweep, not just on entry: the board reuses this position for its typing sound,
-            // so a viewer who walks around while a page is up has to keep the sound following them.
             board.trackViewer(player, position.x(), position.y(), position.z(), distanceSquared);
         }
 

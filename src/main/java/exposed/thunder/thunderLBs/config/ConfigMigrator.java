@@ -231,19 +231,12 @@ public final class ConfigMigrator {
         mergeMissing(config, defaultConfig, "");
     }
 
-    /** Adds the performance.provider-cache-* and performance.async-* controls. */
     private static void migrateVersionSeven(
             YamlConfiguration config,
             YamlConfiguration defaultConfig) {
         mergeMissing(config, defaultConfig, "");
     }
 
-    /**
-     * Adds sounds.typing.category. Until now the typing click was hardcoded to the ambient
-     * category, which is the slider players turn off to be rid of cave sounds -- so for anyone who
-     * had, no sound key worked and the setting looked broken. Existing configs are moved to the new
-     * master default rather than keeping the old behaviour, since silence was never the intent.
-     */
     private static void migrateVersionEight(
             YamlConfiguration config,
             YamlConfiguration defaultConfig) {
@@ -424,9 +417,6 @@ public final class ConfigMigrator {
                     }
                     target.createSection(path);
                 }
-                // Comments are copied only once the path exists: setting them on a path that has
-                // not been created yet is silently dropped, which is why upgraded configs used to
-                // gain new keys with no explanation attached.
                 copyComments(target, defaults, path, key);
                 mergeMissing(target, defaultChild, path);
             } else {

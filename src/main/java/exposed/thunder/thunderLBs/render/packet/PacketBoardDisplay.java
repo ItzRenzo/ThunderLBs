@@ -35,7 +35,6 @@ final class PacketBoardDisplay implements BoardDisplay {
     private static final boolean TELEPORT_DURATION_METADATA = VersionSupport.teleportDurationSupported();
     private static final int SHIFT = TELEPORT_DURATION_METADATA ? 1 : 0;
 
-    /** Set once if the installed packetevents lacks the internal API the shared path needs. */
     private static volatile boolean sharedSerializationBroken;
 
     private static final int INDEX_INTERPOLATION_DELAY = 8;
@@ -131,6 +130,10 @@ final class PacketBoardDisplay implements BoardDisplay {
     }
 
     private void broadcast(PacketWrapper<?> wrapper) {
+        backend.dispatchSend(() -> send(wrapper));
+    }
+
+    private void send(PacketWrapper<?> wrapper) {
         if (fixedViewer != null) {
             if (fixedViewer.isOnline()) {
                 PacketEvents.getAPI().getPlayerManager().sendPacket(fixedViewer, wrapper);
@@ -146,10 +149,6 @@ final class PacketBoardDisplay implements BoardDisplay {
                 broadcastShared(wrapper, viewers);
                 return;
             } catch (LinkageError error) {
-                // The installed packetevents build does not match the internal API this fast path
-                // was compiled against. Disable it for good and fall through: metadata packets are
-                // idempotent, so a partial shared send followed by per-player sends only repeats
-                // state the client already has.
                 sharedSerializationBroken = true;
                 backend.logSharedSerializationUnavailable(error);
             }
@@ -162,12 +161,6 @@ final class PacketBoardDisplay implements BoardDisplay {
         }
     }
 
-    /**
-     * Serializes the wrapper once and writes the same bytes to every viewer, rather than re-encoding
-     * the packet per player. Wrappers built here are encoded at the server's protocol version, and
-     * the shared buffer enters each connection's pipeline from the tail, so per-client handlers --
-     * ViaVersion, packetevents' own send events -- still run for every player individually.
-     */
     private void broadcastShared(PacketWrapper<?> wrapper, Collection<Player> viewers) {
         ProtocolManager protocolManager = PacketEvents.getAPI().getProtocolManager();
         PlayerManager playerManager = PacketEvents.getAPI().getPlayerManager();
@@ -182,8 +175,6 @@ final class PacketBoardDisplay implements BoardDisplay {
                     continue;
                 }
                 if (buffers == null) {
-                    // Serialization needs a live channel to allocate from, hence lazily on the
-                    // first connected viewer.
                     buffers = protocolManager.transformWrappers(wrapper, playerChannel, true);
                 }
                 for (Object buffer : buffers) {
@@ -218,16 +209,27 @@ final class PacketBoardDisplay implements BoardDisplay {
                 location.getYaw(),
                 0,
                 null);
-        PacketEvents.getAPI().getPlayerManager().sendPacket(player, spawn);
-        PacketEvents.getAPI().getPlayerManager().sendPacket(player,
-                new WrapperPlayServerEntityMetadata(entityId, fullMetadata()));
+        WrapperPlayServerEntityMetadata metadata =
+                new WrapperPlayServerEntityMetadata(entityId, fullMetadata());
+        backend.dispatchSend(() -> {
+            if (!player.isOnline()) {
+                return;
+            }
+            PlayerManager playerManager = PacketEvents.getAPI().getPlayerManager();
+            playerManager.sendPacket(player, spawn);
+            playerManager.sendPacket(player, metadata);
+        });
     }
 
     synchronized void sendDestroy(Player player) {
-        if (player == null || !player.isOnline()) {
+        if (player == null) {
             return;
         }
-        PacketEvents.getAPI().getPlayerManager().sendPacket(player, destroyPacket);
+        backend.dispatchSend(() -> {
+            if (player.isOnline()) {
+                PacketEvents.getAPI().getPlayerManager().sendPacket(player, destroyPacket);
+            }
+        });
     }
 
     private List<EntityData<?>> fullMetadata() {
@@ -258,10 +260,6 @@ final class PacketBoardDisplay implements BoardDisplay {
     private static com.github.retrooper.packetevents.util.Vector3f packetVector(Vector3f vector) {
         return new com.github.retrooper.packetevents.util.Vector3f(vector.x(), vector.y(), vector.z());
     }
-
-    // The setters below skip the broadcast when the client already has the value. Pending
-    // interpolation metadata from interpolation() is not lost by skipping: it only shapes how the
-    // client animates a change, and any send that actually carries a change includes it.
 
     @Override
     public synchronized void text(Component component) {

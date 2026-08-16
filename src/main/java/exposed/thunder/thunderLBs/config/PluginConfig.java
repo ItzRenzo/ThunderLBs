@@ -537,11 +537,6 @@ public final class PluginConfig {
                 return builder.toString();
             }
 
-            /**
-             * A key the server does not know is not an error -- resource packs add their own sounds,
-             * and those only exist on the client. But a typo produces exactly the same silence, and
-             * without this there is nothing anywhere to tell the two apart.
-             */
             private static void warnAboutUnknownSound(String key, Consumer<String> warnings) {
                 NamespacedKey parsed = key == null ? null : NamespacedKey.fromString(key);
                 if (parsed == null) {
@@ -555,10 +550,7 @@ public final class PluginConfig {
                                 + "knows about. If it comes from a resource pack this is fine; "
                                 + "otherwise check the spelling, because nothing will play.");
                     }
-                } catch (RuntimeException ignored) {
-                    // No sound registry on this server implementation; skip the check rather than
-                    // failing the whole config load over a diagnostic.
-                }
+                } catch (RuntimeException ignored) {}
             }
         }
     }
@@ -575,14 +567,14 @@ public final class PluginConfig {
         static Performance from(ConfigurationSection section) {
             if (section == null) {
                 return new Performance(DEFAULT_RELATIVE_REFRESH_TICKS, DEFAULT_PROVIDER_CACHE_TTL_TICKS,
-                        true, true, false);
+                        true, true, true);
             }
             return new Performance(
                     clampTicks(section.getLong("relative-refresh-ticks", DEFAULT_RELATIVE_REFRESH_TICKS)),
                     clampTicks(section.getLong("provider-cache-ttl-ticks", DEFAULT_PROVIDER_CACHE_TTL_TICKS)),
                     section.getBoolean("async-providers", true),
                     section.getBoolean("async-papi", true),
-                    section.getBoolean("shared-packet-serialization", false));
+                    section.getBoolean("shared-packet-serialization", true));
         }
 
         private static long clampTicks(long ticks) {

@@ -50,9 +50,6 @@ public final class PlaceholderBridge implements AutoCloseable {
                     + "work, but custom provider placeholders will not be resolved.");
         }
         this.directory = new OnlinePlayerDirectory(plugin);
-        // Default (abort) rejection policy on purpose: a full queue throws, ProviderCache catches it
-        // and clears the in-flight flag, so the value stays stale and retries on the next read. A
-        // discard policy would silently drop the task and leave that key stuck refreshing forever.
         this.refreshPool = new ThreadPoolExecutor(REFRESH_THREADS, REFRESH_THREADS, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(REFRESH_QUEUE_CAPACITY), daemonFactory("ThunderLBs-provider"));
         this.cache = new ProviderCache(this::resolveCached, System::currentTimeMillis, this::executorFor);
@@ -69,7 +66,6 @@ public final class PlaceholderBridge implements AutoCloseable {
         };
     }
 
-    /** How long a cached value stays fresh; viewer-relative values follow the relative refresh rate. */
     private long ttlMillis(ProviderCache.Key key) {
         PluginConfig.Performance performance = plugin.getPluginConfig().performance();
         long ticks = isViewerValue(key.value())
@@ -78,7 +74,6 @@ public final class PlaceholderBridge implements AutoCloseable {
         return ticks * TICK_MILLIS;
     }
 
-    /** Where a background refresh for this key runs, per the async toggles in the config. */
     private Executor executorFor(ProviderCache.Key key) {
         PluginConfig.Performance performance = plugin.getPluginConfig().performance();
         boolean nativeProvider = key.type() != null && supportsProvider(key.provider(), key.type());
@@ -89,23 +84,12 @@ public final class PlaceholderBridge implements AutoCloseable {
         return runnable -> submitSynchronous(key, runnable);
     }
 
-    /**
-     * Runs a refresh on the thread that owns its context. A viewer-scoped key resolves on the
-     * viewer's region thread — the only thread allowed to touch that player under Folia, and the
-     * thread PAPI expansions expect; player-agnostic keys go to the global region (the main thread
-     * outside Folia). If the plugin is disabling, the schedulers would drop the task silently and
-     * leave the key marked in-flight forever, so refuse loudly instead: {@link ProviderCache}
-     * treats the throw as a failed submission and keeps the entry retryable.
-     */
     private void submitSynchronous(ProviderCache.Key key, Runnable refresh) {
         if (!plugin.isEnabled()) {
             throw new RejectedExecutionException("the plugin is disabling");
         }
         Player viewer = key.viewer() == null ? null : directory.byId(key.viewer());
         if (viewer != null) {
-            // The retired callback still runs the refresh: the offline-viewer guard in
-            // resolveCached aborts it, which clears the in-flight flag without caching a
-            // substitute player's value.
             plugin.taskScheduler().executeDelayed(viewer, refresh, refresh, 1L);
             return;
         }
@@ -119,10 +103,6 @@ public final class PlaceholderBridge implements AutoCloseable {
     private String resolveCached(ProviderCache.Key key) {
         OfflinePlayer context = contextFor(key.viewer());
         if (key.viewer() != null && context == null) {
-            // The viewer logged out while this refresh was queued. Resolving anyway would fall
-            // back to an arbitrary online player and cache their value under this viewer's key;
-            // abort instead — the cache keeps the last good value and the idle sweep drops the
-            // entry once nothing reads it.
             throw new IllegalStateException("viewer " + key.viewer() + " is offline");
         }
         return resolveProviderUncached(
@@ -130,11 +110,6 @@ public final class PlaceholderBridge implements AutoCloseable {
                 context, key.placeholder());
     }
 
-    /**
-     * Viewer keys hold a UUID rather than the player itself, so the value stays comparable. A viewer
-     * who logged out resolves to nothing, which is exactly how the providers already treat a missing
-     * player, and the entry is swept once nothing reads it.
-     */
     private OfflinePlayer contextFor(UUID viewer) {
         return viewer == null ? null : directory.byId(viewer);
     }
@@ -161,11 +136,6 @@ public final class PlaceholderBridge implements AutoCloseable {
         return nativeChoices(providerName, leaderboardType, false);
     }
 
-    /**
-     * Resolves a leaderboard value from {@link ProviderCache} without ever waiting on a provider.
-     * Returns {@code null} while the first background load for a value is still in flight; callers
-     * render their missing text for that one cycle and pick the value up on the next read.
-     */
     public String resolveProvider(
             String providerName,
             LeaderboardType leaderboardType,
@@ -187,11 +157,6 @@ public final class PlaceholderBridge implements AutoCloseable {
         return cache.read(key, ttlMillis(key));
     }
 
-    /**
-     * Resolves straight from the providers on the calling thread, bypassing the cache. For
-     * diagnostics only — the render path must go through {@link #resolveProvider} so it never
-     * blocks on a provider.
-     */
     public String resolveProviderNow(
             String providerName,
             LeaderboardType leaderboardType,
@@ -244,9 +209,6 @@ public final class PlaceholderBridge implements AutoCloseable {
     private String resolveCustomProvider(String placeholder, OfflinePlayer player) {
         String resolved = resolve(placeholder, player);
         if (player == null && placeholderApiAvailable && isUnresolved(placeholder, resolved)) {
-
-            // Mirrored from join/quit rather than Bukkit.getOnlinePlayers(), because refreshes can
-            // run off the main thread.
             OfflinePlayer onlineContext = directory.anyOnline();
             if (onlineContext != null) {
                 resolved = resolve(placeholder, onlineContext);

@@ -76,11 +76,12 @@ performance:
   async-papi: true
 
   # Packet backend only: serialize each board update once and send the same bytes to
-  # every viewer, instead of re-encoding the packet per player. Worthwhile when many
-  # players watch the same boards at once (for example hundreds at spawn). Per-client
-  # handling such as ViaVersion still applies, because the shared bytes pass through
-  # each player's connection individually.
-  shared-packet-serialization: false
+  # every viewer, instead of re-encoding the packet per player. Per-client handling
+  # such as ViaVersion still applies, because the shared bytes pass through each
+  # player's connection individually. Safe to leave on: if the fast path does not
+  # match the installed packetevents build, the plugin logs a warning once and falls
+  # back to per-player sends on its own.
+  shared-packet-serialization: true
 
 # The bar shown between the title and the rows.
 #   dots: one symbol per page. Pages that have already been shown use their

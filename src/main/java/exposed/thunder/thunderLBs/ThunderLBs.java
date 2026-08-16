@@ -98,9 +98,6 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
         pluginCommand.setExecutor(command);
         pluginCommand.setTabCompleter(command);
         GlyphWidthBridges.installAvailable(getServer().getPluginManager(), glyphWidths, getLogger());
-        // World managers such as Multiverse create their worlds during their own onEnable, so
-        // Bukkit.getWorld(...) still returns null for them here. Wait for the first tick, by which
-        // point every plugin has enabled and its worlds exist.
         taskScheduler.runGlobal(this::performInitialLoad);
     }
 
@@ -121,11 +118,6 @@ public final class ThunderLBs extends JavaPlugin implements Listener {
         }
     }
 
-    /**
-     * Runs at MONITOR with cancelled events ignored, so boards are only torn down when the unload
-     * is actually going ahead — and while the world is still loaded, so displays can be removed
-     * cleanly. {@link #onWorldLoad} rebuilds the boards if the world returns.
-     */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onWorldUnload(WorldUnloadEvent event) {
         if (leaderboardManager != null) {

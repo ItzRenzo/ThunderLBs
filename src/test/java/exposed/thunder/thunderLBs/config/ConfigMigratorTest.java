@@ -15,9 +15,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ConfigMigratorTest {
     @Test
     void theBundledConfigAlreadyCarriesTheCurrentVersion() throws Exception {
-        // A fresh install writes the bundled file and then runs migrate(). If the
-        // two disagree the very first startup "upgrades" the config and leaves a
-        // config-vN-backup.yml next to it, which reads like something went wrong.
         assertEquals(ConfigMigrator.CURRENT_VERSION, resource("config.yml").getInt("config-version"));
     }
 

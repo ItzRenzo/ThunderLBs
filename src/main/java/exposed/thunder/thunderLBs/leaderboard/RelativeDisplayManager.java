@@ -45,7 +45,6 @@ public final class RelativeDisplayManager {
     private final float boardScale;
     private final Map<UUID, BoardDisplay> playerDisplays = new HashMap<>();
     private final Map<UUID, String> lastRenderedContent = new HashMap<>();
-    // Written from each player's region thread in renderContent, cleared from the origin thread.
     private final Map<UUID, CachedRender> renderCache = new ConcurrentHashMap<>();
     private final List<TaskHandle> animationTasks = new ArrayList<>();
     private final List<TaskHandle> retirementTasks = new ArrayList<>();
@@ -555,9 +554,6 @@ public final class RelativeDisplayManager {
     }
 
     private void refreshPlayers() {
-        // Iterates the board's tracked audience rather than everyone online: the backend sweep (or
-        // refreshAudience for the entity backend) already keeps it world- and range-filtered, so the
-        // per-cycle cost scales with the players near this board, not with the server's player count.
         Set<UUID> viewers = new HashSet<>();
         for (Leaderboard.Viewer viewer : leaderboard.viewers()) {
             Player player = viewer.player();
@@ -570,7 +566,6 @@ public final class RelativeDisplayManager {
         scheduler.execute(origin, () -> removeDisplaysExcept(viewers));
     }
 
-    /** Drops the displays of players who left the audience: logged out, changed world, or walked away. */
     private void removeDisplaysExcept(Set<UUID> viewers) {
         Iterator<Map.Entry<UUID, BoardDisplay>> it = playerDisplays.entrySet().iterator();
         while (it.hasNext()) {
@@ -789,9 +784,6 @@ public final class RelativeDisplayManager {
                     placeholderBridge.patterns(player));
         }
 
-        // With no live %..% patterns in the template, the output is a pure function of these inputs,
-        // so an unchanged set of inputs reuses the previous render instead of running the template,
-        // padding and color passes again on every refresh.
         RenderInputs inputs = new RenderInputs(page, context, color, positionStr, rankStr, playerName, valueStr);
         CachedRender cached = renderCache.get(player.getUniqueId());
         if (cached != null && cached.inputs().equals(inputs)) {
@@ -803,7 +795,6 @@ public final class RelativeDisplayManager {
         return rendered;
     }
 
-    /** The inputs the relative template renders from; page and context compare by identity. */
     private record RenderInputs(LeaderboardPage page, ContentContext context, String color,
             String position, String rank, String player, String value) {
     }

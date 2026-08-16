@@ -201,10 +201,6 @@ public final class LeaderboardFormatting {
         return renderRelative(color, position, rank, player, value, icon, PatternPlaceholders.NONE);
     }
 
-    /**
-     * Whether the relative template contains placeholder patterns that resolve per render. Without
-     * any, the template's output depends only on its arguments, so callers may cache renders.
-     */
     public boolean relativeHasLivePatterns() {
         return relativeLivePatterns;
     }

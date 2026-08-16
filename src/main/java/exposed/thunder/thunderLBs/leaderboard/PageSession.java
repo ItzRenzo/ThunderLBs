@@ -39,8 +39,6 @@ final class PageSession {
     private static final int BAR_INITIAL_INTERPOLATION = 1;
     private static final int BAR_FADE_TICKS = 10;
     private static final double BAR_DEPTH_OFFSET = 0.01D;
-    // Half of the audible range: far enough out that the sound still reads as coming from the board,
-    // close enough in that linear falloff has not eaten much of the volume yet.
     private static final double COMFORTABLE_RANGE_FRACTION = 0.5D;
 
     private static final Pattern HEX_COLOR_TAG = Pattern.compile("<#([A-Fa-f0-9]{3,6})>");
@@ -207,8 +205,6 @@ final class PageSession {
         return rows;
     }
 
-    /** One full render pass over the rows: the strings to show, their offsets, and whether any
-     * provider value was still loading in the background when it was read. */
     private RowRender renderRows() {
         int positions = Math.max(1, definition.settings().positions());
         List<String> circled = definition.formatting().circledNumbers(config.formatting());
@@ -249,8 +245,6 @@ final class PageSession {
                     null,
                     valuePlaceholder);
             logPlaceholder("value", index, valueSource, resolvedValue);
-            // A null resolution is precisely "the cache's first background load is still in
-            // flight" — the signal that this render needs a backfill pass once the load lands.
             pending |= resolvedName == null || resolvedValue == null;
             String rawValue = sanitize(resolvedValue, valueSource);
             String formattedValue = page.valueFormat().format(rawValue);
@@ -273,12 +267,6 @@ final class PageSession {
         return new RowRender(definition.formatting().normalizeRows(rendered), offsets, pending);
     }
 
-    /**
-     * Rows are rendered once at page start, but the provider cache resolves in the background —
-     * the very first ask for a value returns nothing and the row shows the missing text. This task
-     * re-renders shortly after start and swaps updated text onto the spawned rows, so a cold start
-     * shows real values within a couple of seconds instead of a blank page.
-     */
     private void scheduleRowBackfill() {
         TaskHandle task = scheduler.runAtFixedRate(origin, new java.util.function.Consumer<>() {
             int attempts = 0;
@@ -299,8 +287,6 @@ final class PageSession {
         tasks.add(task);
     }
 
-    /** Re-renders the rows and pushes changed text to already-spawned displays. Rows that have not
-     * spawned yet pick the new component up from {@code rowComponents} when their turn comes. */
     private boolean refreshRowText() {
         RowRender render = renderRows();
         List<String> normalized = render.normalized();
@@ -375,8 +361,6 @@ final class PageSession {
                     task.cancel();
                     return;
                 }
-                // One prefix is rendered and parsed per typing tick; pre-building every partial
-                // title would be O(length^2) MiniMessage work in a single tick.
                 int end = Math.min(index + 1, fullTitle.length());
                 display.text(plugin.deserializeMiniMessage(renderTitle(fullTitle.substring(0, end))));
                 if (typing.enabled()) {
@@ -393,12 +377,6 @@ final class PageSession {
                 page.color(), page.icon(), Objects.requireNonNullElse(title, ""), boardPlaceholders);
     }
 
-    /**
-     * Sends the typing click to the players who can actually see this board, rather than
-     * broadcasting it into the world. {@code World#playSound} walks the entire online player list on
-     * every call, which for one sound per title character per tick per board is a lot of scanning to
-     * reach an audience the board already knows.
-     */
     private void playTypingSound(Location base, PluginConfig.Sounds.Typing typing) {
         if (world == null) {
             return;
@@ -424,19 +402,6 @@ final class PageSession {
         }
     }
 
-    /**
-     * Where the click should appear to come from for one viewer.
-     *
-     * <p>A Minecraft sound carries only as far as {@code 16 * max(1, volume)} blocks, and past that
-     * the client simply drops it, so a quiet sound at the board is inaudible to anyone standing back
-     * from it -- while a sound loud enough to carry across the whole view distance is deafening up
-     * close. Volume alone cannot express "quiet, but audible from over there".
-     *
-     * <p>So volume stays purely a loudness control and the emission point moves instead: for a
-     * distant viewer it slides down the line between them and the board until it is comfortably
-     * inside the audible range. The sound still arrives from the board's direction, at the same
-     * loudness, however far away the listener is.
-     */
     static Location typingEmissionPoint(Location origin, Leaderboard.Viewer viewer, float volume) {
         double audibleRange = 16.0D * Math.max(1.0D, volume);
         double comfortableRange = audibleRange * COMFORTABLE_RANGE_FRACTION;
@@ -1276,9 +1241,6 @@ final class PageSession {
     private record BarPair(BoardDisplay container, BoardDisplay value) {
     }
 
-    /** A row's vertical offset and its index into {@code rowStrings}/{@code rowComponents}/
-     * {@code rowDisplays}; the component is read from the list at spawn time so a backfill that
-     * lands before the row's delayed spawn still shows the fresh text. */
     private record RowEntry(double offsetY, int index) {
     }
 

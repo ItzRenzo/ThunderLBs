@@ -40,14 +40,16 @@ class PluginConfigPerformanceTest {
     }
 
     @Test
-    void sharedPacketSerializationIsOptIn() {
-        assertFalse(PluginConfig.Performance.from(null).sharedPacketSerialization(),
-                "shared buffers change how packets are encoded per client, so the admin opts in");
+    void sharedPacketSerializationIsOnByDefault() {
+        assertTrue(PluginConfig.Performance.from(null).sharedPacketSerialization(),
+                "encoding once per broadcast is strictly cheaper, and an incompatible "
+                        + "packetevents build falls back to per-player sends on its own");
 
         YamlConfiguration configuration = new YamlConfiguration();
         ConfigurationSection section = configuration.createSection("performance");
-        section.set("shared-packet-serialization", true);
-        assertTrue(PluginConfig.Performance.from(section).sharedPacketSerialization());
+        section.set("shared-packet-serialization", false);
+        assertFalse(PluginConfig.Performance.from(section).sharedPacketSerialization(),
+                "an explicit opt-out must still win");
     }
 
     @Test
