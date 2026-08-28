@@ -187,6 +187,13 @@ final class ViewerPositionTracker implements Listener {
 
         @Override
         public void onPacketReceive(PacketReceiveEvent event) {
+            PacketTypeCommon type = event.getPacketType();
+            if (type != PacketType.Play.Client.TELEPORT_CONFIRM
+                    && type != PacketType.Play.Client.VEHICLE_MOVE
+                    && type != PacketType.Play.Client.PLAYER_POSITION
+                    && type != PacketType.Play.Client.PLAYER_POSITION_AND_ROTATION) {
+                return;
+            }
             UUID playerId = event.getUser() == null ? null : event.getUser().getUUID();
             if (playerId == null) {
                 return;

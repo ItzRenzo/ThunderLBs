@@ -35,6 +35,7 @@ import java.util.logging.Level;
 public final class PacketRenderBackend implements RenderBackend, Listener {
     private static final long VIEWER_REFRESH_MILLIS = 1000L;
     private static final long JOIN_SYNC_DELAY_TICKS = 1L;
+    private static final boolean PLAYER_IS_CONNECTED_SUPPORTED = detectPlayerIsConnected();
 
     private final ThunderLBs plugin;
     private final RegionTaskScheduler scheduler;
@@ -214,10 +215,23 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
         }
     }
 
+    private static boolean detectPlayerIsConnected() {
+        try {
+            Player.class.getMethod("isConnected");
+            return true;
+        } catch (NoSuchMethodException exception) {
+            return false;
+        }
+    }
+
+    private static boolean isConnected(Player player) {
+        return PLAYER_IS_CONNECTED_SUPPORTED ? player.isConnected() : player.isOnline();
+    }
+
     private void purgeOfflineViewers() {
         for (Channel channel : channels.values()) {
             for (Player player : channel.viewers.values()) {
-                if (!player.isOnline()) {
+                if (!isConnected(player)) {
                     channel.removeViewer(player.getUniqueId(), player);
                 }
             }
@@ -247,7 +261,7 @@ public final class PacketRenderBackend implements RenderBackend, Listener {
             Location origin = board.origin();
             World world = board.world();
             UUID uuid = player.getUniqueId();
-            if (!player.isOnline()) {
+            if (!isConnected(player)) {
                 removeViewer(uuid, player);
                 return;
             }
