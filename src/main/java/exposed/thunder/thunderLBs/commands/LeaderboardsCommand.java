@@ -52,7 +52,8 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
     private static final List<String> EDIT_OPTIONS = List.of("positions", "holder", "billboard", "yaw", "location",
             "textshadow", "bar", "viewdistance", "linewidth", "alignment", "relative", "duration", "animations");
     private static final List<String> ALIGNMENTS = List.of("center", "left", "right");
-    private static final List<String> HOLDER_ACTIONS = List.of("list", "add", "set", "remove", "interval");
+    private static final List<String> HOLDER_ACTIONS = List.of(
+            "list", "add", "set", "remove", "interval", "type", "row", "relative");
     private static final List<String> INTERVAL_SUGGESTIONS = List.of("alltime", "hourly", "daily", "weekly",
             "monthly", "yearly");
     private static final List<String> DURATION_TYPES = List.of("interval", "page", "rowdelay", "row", "typing");
@@ -409,18 +410,20 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
             return;
         }
         LeaderboardDefinition definition = board.definition();
-        LeaderboardPage page = definition.pages().get(0);
-        if (plugin.getPlaceholderBridge().supportsProvider(
-                plugin.getPluginConfig().providerName(), definition.type())) {
-            diagnoseNativeValue(sender, definition, page, "name", ProviderValue.TOP_NAME);
-            diagnoseNativeValue(sender, definition, page, "value", ProviderValue.TOP_VALUE);
-            return;
+        for (LeaderboardPage page : definition.pages()) {
+            if (plugin.getPlaceholderBridge().supportsProvider(
+                    plugin.getPluginConfig().providerName(), page.effectiveType(definition.type()))) {
+                diagnoseNativeValue(sender, definition, page, "name", ProviderValue.TOP_NAME);
+                diagnoseNativeValue(sender, definition, page, "value", ProviderValue.TOP_VALUE);
+                continue;
+            }
+            exposed.thunder.thunderLBs.config.PluginConfig.Provider provider = plugin.getPluginConfig().provider();
+            boolean group = page.effectiveType(definition.type()) == LeaderboardType.GROUP;
+            diagnosePlaceholder(sender, definition.id(), "name", group ? provider.groupName() : provider.name(),
+                    page.holderId(), page.interval());
+            diagnosePlaceholder(sender, definition.id(), "value", group ? provider.groupValue() : provider.value(),
+                    page.holderId(), page.interval());
         }
-        exposed.thunder.thunderLBs.config.PluginConfig.Provider provider = plugin.getPluginConfig().provider();
-        String namePattern = definition.type() == LeaderboardType.GROUP ? provider.groupName() : provider.name();
-        String valuePattern = definition.type() == LeaderboardType.GROUP ? provider.groupValue() : provider.value();
-        diagnosePlaceholder(sender, definition.id(), "name", namePattern, page.holderId(), page.interval());
-        diagnosePlaceholder(sender, definition.id(), "value", valuePattern, page.holderId(), page.interval());
     }
 
     private void diagnosePlaceholder(CommandSender sender, String boardId, String type, String pattern,
@@ -448,7 +451,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
             ProviderValue value) {
         String resolved = plugin.getPlaceholderBridge().resolveProviderNow(
                 plugin.getPluginConfig().providerName(),
-                definition.type(),
+                page.effectiveType(definition.type()),
                 page.holderId(),
                 page.interval(),
                 1,
@@ -559,6 +562,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
         for (int i = 0; i < pages.size(); i++) {
             LeaderboardPage page = pages.get(i);
             send(sender, "  &8#" + (i + 1) + " &f" + page.holderId() + " &8→ &7" + page.title()
+                    + " &8| &7" + page.effectiveType(def.type()).name()
                     + " &8| &7" + page.color() + " &8| &7" + page.valueFormat().name());
         }
     }
@@ -741,7 +745,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
     private void handleHolderEdit(CommandSender sender, LeaderboardDefinition definition, String[] args) {
         if (args.length < 4) {
             sendPrefixed(sender, "&cUsage: /leaderboards edit " + definition.id()
-                    + " holder <list|add|set|remove|interval> ...");
+                    + " holder <list|add|set|remove|interval|type|row|relative> ...");
             return;
         }
         String action = args[3].toLowerCase(Locale.ROOT);
@@ -756,6 +760,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                 for (int i = 0; i < pages.size(); i++) {
                     LeaderboardPage page = pages.get(i);
                     String summary = "&8#" + (i + 1) + " &f" + page.holderId() + " &8→ &7" + page.title()
+                            + " &8| &7Type:&f " + page.effectiveType(definition.type()).name()
                             + " &8| &7Color:&f " + page.color()
                             + " &8| &7Icon:&f " + page.icon()
                             + " &8| &7Format:&f " + page.valueFormat().name()
@@ -804,10 +809,43 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                     return;
                 }
                 String suffix = args.length > 10 ? parseSuffix(args, 10) : pages.get(index).suffix();
-                pages.set(index, new LeaderboardPage(holderId, title, color, icon, format, "", suffix,
-                        pages.get(index).interval()));
+                LeaderboardPage previous = pages.get(index);
+                pages.set(index, new LeaderboardPage(holderId, title, color, icon, format, previous.prefix(), suffix,
+                        previous.interval(), previous.type(), previous.rowPattern(), previous.relativePattern()));
                 if (saveDefinition(sender, definition)) {
                     sendPrefixed(sender, "Updated holder &f#" + (index + 1) + " &7(&f" + holderId + "&7).");
+                }
+            }
+            case "type", "row", "relative" -> {
+                if (args.length < 6) {
+                    sendPrefixed(sender, "&cUsage: /leaderboards edit " + definition.id()
+                            + " holder " + action + " <index> "
+                            + (action.equals("type") ? "<PLAYER|GROUP|inherit>" : "<pattern...|inherit>"));
+                    return;
+                }
+                Integer index = parseIndex(sender, args[4], pages.size());
+                if (index == null) {
+                    return;
+                }
+                LeaderboardPage page = pages.get(index);
+                if (action.equals("type")) {
+                    LeaderboardType type = LeaderboardType.fromString(args[5], null);
+                    if (type == null && !args[5].equalsIgnoreCase("inherit")) {
+                        sendPrefixed(sender, "&cPage type must be PLAYER, GROUP, or inherit.");
+                        return;
+                    }
+                    pages.set(index, page.withType(type));
+                } else {
+                    String pattern = String.join(" ", java.util.Arrays.copyOfRange(args, 5, args.length));
+                    if (pattern.equalsIgnoreCase("inherit")) {
+                        pattern = null;
+                    }
+                    pages.set(index, action.equals("row")
+                            ? page.withFormatting(pattern, page.relativePattern())
+                            : page.withFormatting(page.rowPattern(), pattern));
+                }
+                if (saveDefinition(sender, definition)) {
+                    sendPrefixed(sender, "Updated " + action + " for holder &f#" + (index + 1) + "&7.");
                 }
             }
             case "interval" -> {
@@ -845,7 +883,8 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                     sendPrefixed(sender, "Removed holder &f" + removed.holderId() + " &7(#" + (index + 1) + ").");
                 }
             }
-            default -> sendPrefixed(sender, "&cUnknown holder action. Use list, add, set, or remove.");
+            default -> sendPrefixed(sender,
+                    "&cUnknown holder action. Use list, add, set, remove, interval, type, row, or relative.");
         }
     }
 
@@ -1246,7 +1285,7 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
     private void sendEditUsage(CommandSender sender, String label) {
         sendPrefixed(sender, "&fThunderLBs edit commands");
         sendHelpLine(sender, "/" + label + " edit", "<id> positions <amount>", "Change visible entries", false);
-        sendHelpLine(sender, "/" + label + " edit", "<id> holder add|set|remove|list|interval ...", "Manage holders",
+        sendHelpLine(sender, "/" + label + " edit", "<id> holder add|set|remove|list|interval|type|row|relative ...", "Manage holders",
                 false);
         sendHelpLine(sender, "/" + label + " edit", "<id> location [x y z (yaw)]", "Change the origin", false);
         sendHelpLine(sender, "/" + label + " edit", "<id> textshadow <true|false>", "Toggle text shadows", false);
@@ -1340,6 +1379,16 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                         return partial(args[3], HOLDER_ACTIONS);
                     }
                     String action = args[3].toLowerCase(Locale.ROOT);
+                    if (List.of("type", "row", "relative").contains(action)) {
+                        if (args.length == 5) {
+                            return partial(args[4], indexSuggestions(definition.pages().size()));
+                        }
+                        if (args.length == 6) {
+                            return partial(args[5], action.equals("type")
+                                    ? List.of("PLAYER", "GROUP", "inherit") : List.of("inherit"));
+                        }
+                        return Collections.emptyList();
+                    }
                     if (action.equals("interval")) {
                         if (args.length == 5) {
                             return partial(args[4], indexSuggestions(definition.pages().size()));
@@ -1347,7 +1396,8 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                         if (args.length == 6) {
                             int idx = parseIndexForCompletion(args[4], definition.pages().size());
                             String current = idx >= 0 ? definition.pages().get(idx).interval() : null;
-                            return partial(args[5], ordered(current, intervalSuggestions(definition.type())));
+                            return partial(args[5], ordered(current, intervalSuggestions(idx >= 0
+                                    ? definition.pages().get(idx).effectiveType(definition.type()) : definition.type())));
                         }
                         return Collections.emptyList();
                     }
@@ -1361,7 +1411,8 @@ public final class LeaderboardsCommand implements CommandExecutor, TabCompleter 
                         if (action.equals("set") && args.length == 6) {
                             int idx = parseIndexForCompletion(args[4], definition.pages().size());
                             String current = idx >= 0 ? definition.pages().get(idx).holderId() : null;
-                            return partial(args[5], ordered(current, holderSuggestions(definition.type())));
+                            return partial(args[5], ordered(current, holderSuggestions(idx >= 0
+                                    ? definition.pages().get(idx).effectiveType(definition.type()) : definition.type())));
                         }
                     }
                     if (action.equals("add") && args.length == 5) {

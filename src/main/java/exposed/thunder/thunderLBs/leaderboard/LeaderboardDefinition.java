@@ -13,7 +13,9 @@ import org.bukkit.entity.Display;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class LeaderboardDefinition {
 
@@ -134,6 +136,13 @@ public final class LeaderboardDefinition {
 
     public void save() throws IOException {
         YamlConfiguration yaml = new YamlConfiguration();
+        if (file.exists()) {
+            try {
+                yaml.load(file);
+            } catch (InvalidConfigurationException exception) {
+                throw new IOException("Cannot preserve leaderboard configuration in " + file, exception);
+            }
+        }
         yaml.set("enabled", enabled);
         yaml.set("type", type.name());
         String saveWorld = origin.getWorld() != null ? origin.getWorld().getName()
@@ -149,23 +158,32 @@ public final class LeaderboardDefinition {
         yaml.set("view-distance", viewDistance);
         yaml.set("line-width", lineWidth);
         yaml.set("alignment", alignment.configName());
-        ConfigurationSection barSection = yaml.createSection("bar");
+        ConfigurationSection barSection = LeaderboardFiles.section(yaml, "bar");
         barSection.set("mode", barMode.name().toLowerCase(java.util.Locale.ROOT));
         barSection.set("use-holder-color", barUseHolderColor);
 
-        ConfigurationSection settingsSection = yaml.createSection("settings");
+        ConfigurationSection settingsSection = LeaderboardFiles.section(yaml, "settings");
         settings.serialize(settingsSection);
 
-        ConfigurationSection formattingSection = yaml.createSection("formatting");
+        ConfigurationSection formattingSection = LeaderboardFiles.section(yaml, "formatting");
         formatting.serialize(formattingSection);
 
-        ConfigurationSection animationsSection = yaml.createSection("animations");
+        ConfigurationSection animationsSection = LeaderboardFiles.section(yaml, "animations");
         animations.serialize(animationsSection);
 
-        ConfigurationSection pagesSection = yaml.createSection("pages");
+        ConfigurationSection pagesSection = LeaderboardFiles.section(yaml, "pages");
+        Set<String> pageKeys = new HashSet<>();
+        for (int i = 1; i <= pages.size(); i++) {
+            pageKeys.add("page-" + i);
+        }
+        for (String key : new ArrayList<>(pagesSection.getKeys(false))) {
+            if (!pageKeys.contains(key)) {
+                pagesSection.set(key, null);
+            }
+        }
         for (int i = 0; i < pages.size(); i++) {
             LeaderboardPage page = pages.get(i);
-            ConfigurationSection section = pagesSection.createSection("page-" + (i + 1));
+            ConfigurationSection section = LeaderboardFiles.section(pagesSection, "page-" + (i + 1));
             page.serialize(section);
         }
         LeaderboardFiles.atomicSave(yaml, file);

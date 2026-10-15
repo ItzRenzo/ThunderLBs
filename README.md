@@ -1,6 +1,79 @@
 # ThunderLBs
 Better docs soon
 
+## Mixed player and civilization pages
+
+A board can rotate PLAYER and GROUP pages at the same position using its existing
+page animations. Each page's optional `type` overrides the board-level `type`;
+omitting it keeps the board's type, including on existing GROUP boards.
+`formatting.row` and `formatting.relative` can each be overridden per page.
+Omitted patterns inherit the board's formatting, which inherits global defaults.
+Position, yaw, settings, animations, and page timing remain board-level options.
+
+Select your existing custom provider in `config.yml`:
+
+```yaml
+provider: unstablepvpffa
+```
+
+In the board's file, keep its existing position, settings, and animation sections,
+and configure the pages as follows:
+
+```yaml
+type: PLAYER
+pages:
+  page-1:
+    type: PLAYER
+    holder: coins
+    title: COINS
+    color: '#FACC15'
+    icon: <glyph:coins_icon>
+    value-format: SHORT_NUMBER
+    interval: alltime
+
+  page-2:
+    type: GROUP
+    holder: coins
+    title: CIV COINS
+    color: '#FACC15'
+    icon: <glyph:coins_icon>
+    value-format: SHORT_NUMBER
+    interval: alltime
+    formatting:
+      row: '<color:%color%>%position%</color> <white>%player%</white> <pad:130:.:right> <color:%color%>%value%</color>'
+      relative: '<color:%color%>%position%</color> <white>%player%</white> <pad:130:.:right> <color:%color%>%value%</color>'
+```
+
+The `unstablepvpffa` section in `providers.yml` must contain its actual
+PlaceholderAPI patterns for these fields:
+
+| Page type | Top rows | Viewer-relative line | `%player%` |
+| --- | --- | --- | --- |
+| PLAYER | `name`, `value` | `viewer-rank`, `viewer-value` | Player name |
+| GROUP | `group-name`, `group-value` | `group-viewer-rank`, `group-viewer-value` | Civilization name; the relative line uses `group-team` |
+
+Both page types can use `holder: coins`: provider cache keys include the effective
+page type as well as holder and interval. PLAYER row formats resolve additional
+PlaceholderAPI placeholders against that row's player, so player-head placeholders
+from your installed expansion/resource pack keep working. GROUP row formats have
+no player context and never look up civilization names as player accounts. Use a
+GROUP format without player-head placeholders, as above. Relative-format
+PlaceholderAPI placeholders still resolve against the viewer; a missing group-team
+name displays `missing-text`.
+
+The holder dialog includes page type and row/relative format overrides. Empty
+format fields inherit existing formatting. Commands are also available:
+
+```text
+/lb edit <id> holder type <index> <PLAYER|GROUP|inherit>
+/lb edit <id> holder row <index> <pattern...|inherit>
+/lb edit <id> holder relative <index> <pattern...|inherit>
+```
+
+Existing holder `set`, interval changes, reordering, saving, and reloading preserve
+page options. `/lb validate` checks page formats and accounts for them when
+suggesting a line width.
+
 ## PlaceholderAPI in formats
 
 Any PlaceholderAPI placeholder can be written straight into a format, and it
@@ -18,7 +91,7 @@ formatting:
 
 | Format | Resolves against |
 | --- | --- |
-| `formatting.row` | the player on that row — nobody on a group leaderboard or an empty slot |
+| `formatting.row` | the player on that row — nobody on a GROUP page or an empty slot |
 | `formatting.relative` | the viewer reading the line |
 | `formatting.title`, `bar.background`, `bar.foreground` | nobody, so use server-wide placeholders such as `%server_online%` |
 

@@ -1,5 +1,6 @@
 package exposed.thunder.thunderLBs.leaderboard;
 
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
@@ -48,6 +49,11 @@ public final class LeaderboardFiles {
         } finally {
             Files.deleteIfExists(temporary);
         }
+    }
+
+    public static ConfigurationSection section(ConfigurationSection parent, String key) {
+        ConfigurationSection existing = parent.getConfigurationSection(key);
+        return existing == null ? parent.createSection(key) : existing;
     }
 
     public static void copy(File source, File target) throws IOException {

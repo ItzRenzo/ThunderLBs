@@ -77,13 +77,15 @@ public final class LeaderboardValidator {
             error(issues, "pages", "at least one page is required");
         }
         Set<String> holders = new HashSet<>();
+        boolean pagePadded = false;
         for (int index = 0; index < definition.pages().size(); index++) {
             LeaderboardPage page = definition.pages().get(index);
             String path = "pages.page-" + (index + 1);
             if (page.holderId() == null || page.holderId().isBlank()) {
                 error(issues, path + ".holder", "must not be empty");
-            } else if (!holders.add(page.holderId().toLowerCase(Locale.ROOT) + "|" + page.interval())) {
-                warning(issues, path + ".holder", "duplicates an earlier holder with the same interval");
+            } else if (!holders.add(page.effectiveType(definition.type()) + "|"
+                    + page.holderId().toLowerCase(Locale.ROOT) + "|" + page.interval())) {
+                warning(issues, path + ".holder", "duplicates an earlier holder with the same type and interval");
             }
             if (page.title() == null || page.title().isBlank()) {
                 error(issues, path + ".title", "must not be empty");
@@ -91,6 +93,12 @@ public final class LeaderboardValidator {
             if (!HolderColor.isValid(page.color())) {
                 error(issues, path + ".color",
                         "must be a named MiniMessage color, a hex color, or a gradient of 2-10 hex colors");
+            }
+            if (page.rowPattern() != null) {
+                pagePadded |= validatePattern(issues, path + ".formatting.row", page.rowPattern(), definition);
+            }
+            if (page.relativePattern() != null) {
+                pagePadded |= validatePattern(issues, path + ".formatting.relative", page.relativePattern(), definition);
             }
         }
 
@@ -100,7 +108,7 @@ public final class LeaderboardValidator {
                 | validatePattern(issues, "formatting.relative", formatting.relativePattern(), definition)
                 | validatePattern(issues, "formatting.bar.background", formatting.barBackground(), definition)
                 | validatePattern(issues, "formatting.bar.foreground", formatting.barForeground(), definition);
-        if (padded) {
+        if (padded || pagePadded) {
 
 
             if (!formatting.padding().enabled()) {
@@ -162,7 +170,14 @@ public final class LeaderboardValidator {
 
 
     public int suggestedLineWidth(LeaderboardDefinition definition) {
-        return definition == null ? -1 : suggestedLineWidth(measurer, definition.formatting());
+        if (definition == null) {
+            return -1;
+        }
+        int suggested = suggestedLineWidth(measurer, definition.formatting());
+        for (LeaderboardPage page : definition.pages()) {
+            suggested = Math.max(suggested, suggestedLineWidth(measurer, page.formatting(definition.formatting())));
+        }
+        return suggested;
     }
 
     static int suggestedLineWidth(TextMeasurer measurer, LeaderboardFormatting formatting) {

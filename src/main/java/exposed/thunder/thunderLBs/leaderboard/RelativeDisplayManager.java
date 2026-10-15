@@ -52,7 +52,6 @@ public final class RelativeDisplayManager {
     private final RegionTaskScheduler scheduler;
     private volatile LeaderboardPage activePage;
     private volatile ContentContext contentContext;
-    private final boolean memoizableRelative;
     private TaskHandle refreshTask;
     private float animationOffset;
     private byte animationOpacity = packOpacity(OPACITY_TRANSPARENT);
@@ -70,7 +69,6 @@ public final class RelativeDisplayManager {
         this.displayLocation = calculateLocation(definition);
         this.rangeSquared = leaderboard.rangeSquared();
         this.refreshTicks = plugin.getPluginConfig().performance().relativeRefreshTicks();
-        this.memoizableRelative = !definition.formatting().relativeHasLivePatterns();
         this.scheduler = RegionTaskScheduler.create(plugin);
     }
 
@@ -714,10 +712,11 @@ public final class RelativeDisplayManager {
 
     private ContentContext createContentContext(LeaderboardPage page) {
         PluginConfig config = plugin.getPluginConfig();
-        boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), definition.type());
+        LeaderboardType type = page.effectiveType(definition.type());
+        boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), type);
         ProviderQueries queries = ProviderQueries.create(config.providerName(), config.provider(),
-                definition.type(), page.holderId(), page.interval(), nativeProvider);
-        return new ContentContext(queries, page.color(), page.icon());
+                type, page.holderId(), page.interval(), nativeProvider);
+        return new ContentContext(queries, page.color(), page.icon(), page.formatting(definition.formatting()));
     }
 
     private String renderContent(Player player, LeaderboardPage page, ContentContext context) {
@@ -729,7 +728,7 @@ public final class RelativeDisplayManager {
 
         String resolvedRank = placeholderBridge.resolveProvider(
                 config.providerName(),
-                definition.type(),
+                page.effectiveType(definition.type()),
                 page.holderId(),
                 page.interval(),
                 0,
@@ -740,7 +739,7 @@ public final class RelativeDisplayManager {
         String rankStr = rankMissing ? config.missingPosition() : resolvedRank;
         String resolvedValue = placeholderBridge.resolveProvider(
                 config.providerName(),
-                definition.type(),
+                page.effectiveType(definition.type()),
                 page.holderId(),
                 page.interval(),
                 0,
@@ -760,7 +759,7 @@ public final class RelativeDisplayManager {
         }
 
         String playerName;
-        if (definition.type() == LeaderboardType.GROUP) {
+        if (page.effectiveType(definition.type()) == LeaderboardType.GROUP) {
             playerName = resolveGroupName(player, page, context, rankStr, rankMissing, config);
         } else {
             playerName = player.getName();
@@ -771,15 +770,15 @@ public final class RelativeDisplayManager {
         String color = context.color();
         if (!rankMissing) {
             try {
-                color = definition.formatting().rankColor(
+                color = context.formatting().rankColor(
                         Integer.parseInt(rankStr.trim()), config.formatting(), color);
             } catch (NumberFormatException ignored) {}
         }
 
 
 
-        if (!memoizableRelative) {
-            return definition.formatting().renderRelative(
+        if (context.formatting().relativeHasLivePatterns()) {
+            return context.formatting().renderRelative(
                     color, positionStr, rankStr, playerName, valueStr, context.icon(),
                     placeholderBridge.patterns(player));
         }
@@ -789,7 +788,7 @@ public final class RelativeDisplayManager {
         if (cached != null && cached.inputs().equals(inputs)) {
             return cached.rendered();
         }
-        String rendered = definition.formatting().renderRelative(
+        String rendered = context.formatting().renderRelative(
                 color, positionStr, rankStr, playerName, valueStr, context.icon());
         renderCache.put(player.getUniqueId(), new CachedRender(inputs, rendered));
         return rendered;
@@ -817,7 +816,7 @@ public final class RelativeDisplayManager {
                 String source = context.queries().topNameSource(position);
                 String resolved = placeholderBridge.resolveProvider(
                         config.providerName(),
-                        definition.type(),
+                        page.effectiveType(definition.type()),
                         page.holderId(),
                         page.interval(),
                         position,
@@ -832,7 +831,7 @@ public final class RelativeDisplayManager {
         }
 
         String teamPlaceholder = context.teamPlaceholder();
-        return teamPlaceholder.isEmpty() ? player.getName()
+        return teamPlaceholder.isEmpty() ? config.missingText()
                 : sanitize(placeholderBridge.resolve(teamPlaceholder, player), teamPlaceholder, config);
     }
 
@@ -881,7 +880,8 @@ public final class RelativeDisplayManager {
         }
     }
 
-    private record ContentContext(ProviderQueries queries, String color, String icon) {
+    private record ContentContext(ProviderQueries queries, String color, String icon,
+            LeaderboardFormatting formatting) {
 
         boolean nativeProvider() {
             return queries.nativeProvider();

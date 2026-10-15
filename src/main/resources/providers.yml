@@ -10,6 +10,9 @@
 # At minimum, configure the four player fields below, then select the section's
 # name with the "provider" option in config.yml. Group providers may also define
 # group-name, group-value, group-viewer-rank, group-viewer-value, and group-team.
+# A page may select PLAYER or GROUP independently of its board. PLAYER pages
+# use the normal fields; GROUP pages use group-* fields from the same provider.
+# For GROUP pages, group-name and group-team should return civilization names.
 examplelbprovider:
   name: "%examplelb_%holder%_%position%_name%"
   value: "%examplelb_%holder%_%position%_value%"

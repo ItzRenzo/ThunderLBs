@@ -11,6 +11,7 @@ import exposed.thunder.thunderLBs.leaderboard.LeaderboardDefinition;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardManager;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardPage;
 import exposed.thunder.thunderLBs.leaderboard.LeaderboardSettings;
+import exposed.thunder.thunderLBs.leaderboard.LeaderboardType;
 import exposed.thunder.thunderLBs.leaderboard.ValidationIssue;
 import exposed.thunder.thunderLBs.leaderboard.ValueFormat;
 import exposed.thunder.thunderLBs.render.TextAlignment;
@@ -494,15 +495,18 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
         String providerName = plugin.getPluginConfig().providerName();
         boolean nativeProvider = plugin.getPlaceholderBridge().isNativeProvider(providerName);
         List<String> holderChoices = nativeProvider
-                ? plugin.getPlaceholderBridge().holderChoices(providerName, definition.type())
+                ? Arrays.stream(LeaderboardType.values())
+                        .flatMap(type -> plugin.getPlaceholderBridge().holderChoices(providerName, type).stream())
+                        .distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList()
                 : List.of();
         List<String> intervalChoices = nativeProvider
-                ? plugin.getPlaceholderBridge().intervalChoices(providerName, definition.type())
+                ? Arrays.stream(LeaderboardType.values())
+                        .flatMap(type -> plugin.getPlaceholderBridge().intervalChoices(providerName, type).stream())
+                        .distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList()
                 : List.of();
         boolean intervalUnavailable = nativeProvider && intervalChoices.isEmpty();
         if (nativeProvider && adding && holderChoices.isEmpty()) {
-            error(player, "No registered holders were reported by " + providerName + " for "
-                    + definition.type().name().toLowerCase(Locale.ROOT) + " leaderboards.");
+            error(player, "No registered holders were reported by " + providerName + ".");
             openHolders(player, id);
             return;
         }
@@ -511,6 +515,13 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
         inputs.add(nativeProvider
                 ? select("holder", "Holder ID", choiceOptions(holderChoices, page.holderId(), false))
                 : textInput("holder", "Holder ID", page.holderId(), 128));
+        inputs.add(select("type", "Page type (inherit uses board type)",
+                choiceOptions(List.of("inherit", "PLAYER", "GROUP"),
+                        page.type() == null ? "inherit" : page.type().name(), false)));
+        inputs.add(textInput("row", "Row format (empty inherits)",
+                page.rowPattern() == null ? "" : page.rowPattern(), 2048));
+        inputs.add(textInput("relative", "Relative format (empty inherits)",
+                page.relativePattern() == null ? "" : page.relativePattern(), 2048));
         inputs.add(textInput("title", "Title", page.title(), 256));
         inputs.add(textInput("color", "Color / gradient", page.color(), HolderColor.MAX_INPUT_LENGTH));
         inputs.add(textInput("icon", "Icon", page.icon(), 64));
@@ -587,11 +598,15 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
             openHolders(player, id);
             return;
         }
+        LeaderboardType type = LeaderboardType.fromString(text(response, "type"), null);
+        LeaderboardType effectiveType = type == null ? definition.type() : type;
+        String row = text(response, "row");
+        String relative = text(response, "relative");
         String interval = text(response, "interval");
         String providerName = plugin.getPluginConfig().providerName();
         if (interval.isBlank()
                 && plugin.getPlaceholderBridge().isNativeProvider(providerName)
-                && plugin.getPlaceholderBridge().intervalChoices(providerName, definition.type()).isEmpty()) {
+                && plugin.getPlaceholderBridge().intervalChoices(providerName, effectiveType).isEmpty()) {
             interval = adding
                     ? LeaderboardPage.DEFAULT_INTERVAL
                     : definition.pages().get(index).interval();
@@ -604,7 +619,10 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
                 format,
                 text(response, "prefix"),
                 text(response, "suffix"),
-                interval
+                interval,
+                type,
+                row.isEmpty() ? null : row,
+                relative.isEmpty() ? null : relative
         );
         if (adding) {
             definition.pages().add(replacement);
@@ -751,6 +769,9 @@ public final class LeaderboardEditDialogs implements LeaderboardEditor {
         return Component.text()
                 .append(Component.text("Holder ID: ", ACCENT))
                 .append(Component.text(page.holderId(), NamedTextColor.WHITE))
+                .append(Component.newline())
+                .append(Component.text("Page type: ", ACCENT))
+                .append(Component.text(page.type() == null ? "Inherit" : page.type().name(), NamedTextColor.WHITE))
                 .append(Component.newline())
                 .append(Component.text("Display color: ", ACCENT))
                 .append(holderColorPreview(page.color(), page.color()))

@@ -63,10 +63,10 @@ public final class LeaderboardAnimations {
     }
 
     public void serialize(ConfigurationSection section) {
-        Title.serialize(section.createSection("title"), title);
-        Row.serialize(section.createSection("rows"), row);
-        Opacity.serialize(section.createSection("opacity"), opacity);
-        Bar.serialize(section.createSection("progress"), bar);
+        Title.serialize(LeaderboardFiles.section(section, "title"), title);
+        Row.serialize(LeaderboardFiles.section(section, "rows"), row);
+        Opacity.serialize(LeaderboardFiles.section(section, "opacity"), opacity);
+        Bar.serialize(LeaderboardFiles.section(section, "progress"), bar);
     }
 
     public static final class Title {

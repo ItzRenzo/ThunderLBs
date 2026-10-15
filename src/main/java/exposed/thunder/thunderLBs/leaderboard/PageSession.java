@@ -51,6 +51,8 @@ final class PageSession {
     private final Leaderboard leaderboard;
     private final LeaderboardDefinition definition;
     private final LeaderboardPage page;
+    private final LeaderboardType pageType;
+    private final LeaderboardFormatting formatting;
     private final RenderBackend backend;
     private final Location origin;
     private final World world;
@@ -98,6 +100,8 @@ final class PageSession {
         this.leaderboard = leaderboard;
         this.definition = definition;
         this.page = page;
+        this.pageType = page.effectiveType(definition.type());
+        this.formatting = page.formatting(definition.formatting());
         this.backend = plugin.renderBackend();
         this.origin = leaderboard.origin();
         this.world = leaderboard.world();
@@ -113,7 +117,7 @@ final class PageSession {
         this.barMode = definition.barMode();
         this.barUseHolderColor = definition.barUseHolderColor();
         this.debugPlaceholders = plugin.hasPlaceholderDebugListeners();
-        this.rowHasPlaceholders = PlaceholderPatterns.mayContain(definition.formatting().rowPattern());
+        this.rowHasPlaceholders = PlaceholderPatterns.mayContain(formatting.rowPattern());
         this.viewRange = Math.max(0.1F, definition.viewDistance() / 64.0F);
         this.boardScale = (float) definition.settings().boardScale();
     }
@@ -184,8 +188,8 @@ final class PageSession {
 
     private List<RowEntry> prepareEntries() {
         PluginConfig.Provider provider = config.provider();
-        boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), definition.type());
-        if (definition.type() == LeaderboardType.GROUP && !nativeProvider && !provider.supportsGroups()) {
+        boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), pageType);
+        if (pageType == LeaderboardType.GROUP && !nativeProvider && !provider.supportsGroups()) {
             plugin.getLogger().warning("Provider '" + config.providerName()
                     + "' has no group placeholders configured; leaderboard '" + definition.id()
                     + "' will not resolve.");
@@ -207,16 +211,16 @@ final class PageSession {
 
     private RowRender renderRows() {
         int positions = Math.max(1, definition.settings().positions());
-        List<String> circled = definition.formatting().circledNumbers(config.formatting());
+        List<String> circled = formatting.circledNumbers(config.formatting());
         List<String> rendered = new ArrayList<>(positions);
         List<Double> offsets = new ArrayList<>(positions);
         PluginConfig.Provider provider = config.provider();
-        boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), definition.type());
+        boolean nativeProvider = placeholderBridge.supportsProvider(config.providerName(), pageType);
         boolean pending = false;
         String holderId = page.holderId();
         String interval = page.interval();
         ProviderQueries queries = ProviderQueries.create(config.providerName(), provider,
-                definition.type(), holderId, interval, nativeProvider);
+                pageType, holderId, interval, nativeProvider);
         for (int index = 1; index <= positions; index++) {
             String namePlaceholder = queries.topNamePlaceholder(index);
             String valuePlaceholder = queries.topValuePlaceholder(index);
@@ -225,7 +229,7 @@ final class PageSession {
 
             String resolvedName = placeholderBridge.resolveProvider(
                     config.providerName(),
-                    definition.type(),
+                    pageType,
                     holderId,
                     interval,
                     index,
@@ -237,7 +241,7 @@ final class PageSession {
 
             String resolvedValue = placeholderBridge.resolveProvider(
                     config.providerName(),
-                    definition.type(),
+                    pageType,
                     holderId,
                     interval,
                     index,
@@ -258,13 +262,13 @@ final class PageSession {
             double offsetY = scaledRowOffset(
                     definition.settings().rowYOffset(), config.defaults().rowSpacing(), index, boardScale);
 
-            String rowColor = definition.formatting().rankColor(index, config.formatting(), page.color());
+            String rowColor = formatting.rankColor(index, config.formatting(), page.color());
             offsets.add(offsetY);
             rendered.add(renderRow(rowColor, circledNumber, playerName, formattedValue,
                     rowPlaceholders(playerName)));
         }
 
-        return new RowRender(definition.formatting().normalizeRows(rendered), offsets, pending);
+        return new RowRender(formatting.normalizeRows(rendered), offsets, pending);
     }
 
     private void scheduleRowBackfill() {
@@ -373,7 +377,7 @@ final class PageSession {
     }
 
     private String renderTitle(String title) {
-        return definition.formatting().renderTitle(
+        return formatting.renderTitle(
                 page.color(), page.icon(), Objects.requireNonNullElse(title, ""), boardPlaceholders);
     }
 
@@ -551,8 +555,8 @@ final class PageSession {
             String foregroundColor,
             boolean valueInitiallyOpaque) {
         Location valueLocation = computeValueLocation(containerLocation);
-        String backgroundTemplate = definition.formatting().barBackground();
-        String foregroundTemplate = definition.formatting().barForeground();
+        String backgroundTemplate = formatting.barBackground();
+        String foregroundTemplate = formatting.barForeground();
 
         BoardDisplay container = spawnDisplay(containerLocation, baseOptions()
                 .shadowed(false)
@@ -839,7 +843,7 @@ final class PageSession {
         }
 
 
-        return plugin.deserializeMiniMessage(definition.formatting().padding()
+        return plugin.deserializeMiniMessage(formatting.padding()
                 .apply(HolderColor.apply(processed, colorToUse), colorToUse));
     }
 
@@ -923,7 +927,7 @@ final class PageSession {
 
     private String renderRow(String color, String circledNumber, String playerName, String value,
             PatternPlaceholders placeholders) {
-        return definition.formatting().renderRow(color, circledNumber, playerName, value, page.icon(),
+        return formatting.renderRow(color, circledNumber, playerName, value, page.icon(),
                 placeholders);
     }
 
@@ -935,7 +939,7 @@ final class PageSession {
 
 
 
-        boolean namesAPlayer = definition.type() != LeaderboardType.GROUP
+        boolean namesAPlayer = pageType != LeaderboardType.GROUP
                 && !playerName.equals(config.missingText());
         return placeholderBridge.patterns(namesAPlayer ? placeholderBridge.holderContext(playerName) : null);
     }

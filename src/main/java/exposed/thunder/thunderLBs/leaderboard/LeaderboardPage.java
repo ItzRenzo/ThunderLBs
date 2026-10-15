@@ -13,6 +13,9 @@ public final class LeaderboardPage {
     private final String prefix;
     private final String suffix;
     private final String interval;
+    private final LeaderboardType type;
+    private final String rowPattern;
+    private final String relativePattern;
 
     public LeaderboardPage(String holderId, String title, String color, String icon, ValueFormat valueFormat,
             String prefix, String suffix) {
@@ -21,6 +24,12 @@ public final class LeaderboardPage {
 
     public LeaderboardPage(String holderId, String title, String color, String icon, ValueFormat valueFormat,
             String prefix, String suffix, String interval) {
+        this(holderId, title, color, icon, valueFormat, prefix, suffix, interval, null, null, null);
+    }
+
+    public LeaderboardPage(String holderId, String title, String color, String icon, ValueFormat valueFormat,
+            String prefix, String suffix, String interval, LeaderboardType type,
+            String rowPattern, String relativePattern) {
         this.holderId = holderId;
         this.title = title;
         this.color = color;
@@ -29,6 +38,9 @@ public final class LeaderboardPage {
         this.prefix = sanitizeSuffix(prefix);
         this.suffix = sanitizeSuffix(suffix);
         this.interval = sanitizeInterval(interval);
+        this.type = type;
+        this.rowPattern = rowPattern;
+        this.relativePattern = relativePattern;
     }
 
     private static String sanitizeInterval(String interval) {
@@ -82,7 +94,38 @@ public final class LeaderboardPage {
     }
 
     public LeaderboardPage withInterval(String interval) {
-        return new LeaderboardPage(holderId, title, color, icon, valueFormat, prefix, suffix, interval);
+        return new LeaderboardPage(holderId, title, color, icon, valueFormat, prefix, suffix, interval,
+                type, rowPattern, relativePattern);
+    }
+
+    public LeaderboardType type() {
+        return type;
+    }
+
+    public LeaderboardType effectiveType(LeaderboardType boardType) {
+        return type == null ? boardType : type;
+    }
+
+    public String rowPattern() {
+        return rowPattern;
+    }
+
+    public String relativePattern() {
+        return relativePattern;
+    }
+
+    public LeaderboardFormatting formatting(LeaderboardFormatting inherited) {
+        return inherited.withPagePatterns(rowPattern, relativePattern);
+    }
+
+    public LeaderboardPage withType(LeaderboardType type) {
+        return new LeaderboardPage(holderId, title, color, icon, valueFormat, prefix, suffix, interval,
+                type, rowPattern, relativePattern);
+    }
+
+    public LeaderboardPage withFormatting(String rowPattern, String relativePattern) {
+        return new LeaderboardPage(holderId, title, color, icon, valueFormat, prefix, suffix, interval,
+                type, rowPattern, relativePattern);
     }
 
     public boolean hasSuffix() {
@@ -105,10 +148,13 @@ public final class LeaderboardPage {
         String prefix = section.getString("prefix", "");
         String suffix = section.getString("suffix", "");
         String interval = section.getString("interval", DEFAULT_INTERVAL);
-        return new LeaderboardPage(holder, title, color, icon, format, prefix, suffix, interval);
+        LeaderboardType type = LeaderboardType.fromString(section.getString("type"), null);
+        return new LeaderboardPage(holder, title, color, icon, format, prefix, suffix, interval, type,
+                section.getString("formatting.row"), section.getString("formatting.relative"));
     }
 
     public void serialize(ConfigurationSection section) {
+        section.set("type", type == null ? null : type.name());
         section.set("holder", holderId);
         section.set("title", title);
         section.set("color", color);
@@ -117,6 +163,8 @@ public final class LeaderboardPage {
         section.set("prefix", prefix);
         section.set("suffix", suffix);
         section.set("interval", interval);
+        section.set("formatting.row", rowPattern);
+        section.set("formatting.relative", relativePattern);
     }
 
     @Override

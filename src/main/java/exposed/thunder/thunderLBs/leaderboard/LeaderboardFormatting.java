@@ -122,19 +122,28 @@ public final class LeaderboardFormatting {
         section.set("title", titlePattern);
         section.set("row", rowPattern);
         section.set("relative", relativePattern);
-        ConfigurationSection bar = section.createSection("bar");
+        ConfigurationSection bar = LeaderboardFiles.section(section, "bar");
         bar.set("background", barBackground);
         bar.set("foreground", barForeground);
         if (!circledNumbers.isEmpty()) {
             section.set("circled-numbers", circledNumbers);
         }
         if (!rankColors.isEmpty()) {
-            ConfigurationSection colors = section.createSection("rank-colors");
+            ConfigurationSection colors = LeaderboardFiles.section(section, "rank-colors");
             rankColors.forEach((position, color) -> colors.set(String.valueOf(position), color));
         }
         if (paddingOverride != null) {
-            paddingOverride.serialize(section.createSection("padding"));
+            paddingOverride.serialize(LeaderboardFiles.section(section, "padding"));
         }
+    }
+
+    public LeaderboardFormatting withPagePatterns(String row, String relative) {
+        if (row == null && relative == null) {
+            return this;
+        }
+        return new LeaderboardFormatting(titlePattern, row == null ? rowPattern : row,
+                relative == null ? relativePattern : relative, barBackground, barForeground,
+                circledNumbers, rankColors, paddingOverride, padding, rowNormalizer);
     }
 
     public String titlePattern() {

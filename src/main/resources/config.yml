@@ -103,6 +103,8 @@ bar:
   background: "<#4D4D4D><st>                    </st>"
   foreground: "<#CFCFCF><st>                    </st>"
 
+# Each board page may override formatting.row and formatting.relative.
+# Omitted page patterns inherit the board formats, then these global defaults.
 formatting:
   # Holder colors may be a named MiniMessage color, a #RRGGBB color, or a
   # 2-10 stop gradient such as #FF2929:#FF8A00:#FFE600.
